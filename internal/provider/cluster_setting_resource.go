@@ -117,7 +117,8 @@ func (r *ClusterSettingResource) getClusterSetting(ctx context.Context, clusterI
 	return SqlConWithTempUser(ctx, r.client, clusterId, func(db *pgx.Conn) (*string, error) {
 		var value string
 
-		err := db.QueryRow(fmt.Sprintf("SHOW CLUSTER SETTING %s", pgx.Identifier{settingName}.Sanitize())).Scan(&value)
+		// Funky query that casts the resulting type to a string
+		err := db.QueryRow(fmt.Sprintf("with x as (show cluster setting %s) select value::TEXT from x as t(value)", pgx.Identifier{settingName}.Sanitize())).Scan(&value)
 
 		if err != nil {
 			return nil, err
