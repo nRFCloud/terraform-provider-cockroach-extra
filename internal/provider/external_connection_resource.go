@@ -11,7 +11,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/jackc/pgx"
-	"strings"
 )
 
 type ExternalConnectionResource struct {
@@ -33,10 +32,10 @@ func buildExternalConnectionId(clusterId string, connectionName string) string {
 	return clusterId + "|" + connectionName
 }
 
-func parseExternalConnectionId(id string) (clusterId string, connectionName string) {
-	parts := strings.Split(id, "|")
-	return parts[0], parts[1]
-}
+//func parseExternalConnectionId(id string) (clusterId string, connectionName string) {
+//	parts := strings.Split(id, "|")
+//	return parts[0], parts[1]
+//}
 
 func (r *ExternalConnectionResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
