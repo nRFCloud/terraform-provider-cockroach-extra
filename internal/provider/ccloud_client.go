@@ -8,9 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/jackc/pgx"
-	"io"
 	"net/http"
-	"strings"
 )
 
 type CcloudClient struct {
@@ -70,9 +68,7 @@ func (c *CcloudClient) CreateTempUser(ctx context.Context, clusterId string) (*T
 	}
 
 	if resp.StatusCode != 200 {
-		content := new(strings.Builder)
-		io.Copy(content, resp.Body)
-		return nil, fmt.Errorf("received non-200 status code: %d, %s", resp.StatusCode, content.String())
+		return nil, fmt.Errorf("received non-200 status code: %d", resp.StatusCode)
 	}
 
 	defer resp.Body.Close()
@@ -91,6 +87,10 @@ func (c *CcloudClient) DeleteTempUser(ctx context.Context, clusterId string, use
 	req.Header.Add("Authorization", GenerateAuthHeader(c.ApiKey))
 
 	resp, err := c.HttpClient.Do(req)
+	if err != nil {
+		return err
+	}
+
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("received non-200 status code: %d", resp.StatusCode)
 	}
@@ -127,9 +127,7 @@ func (c *CcloudClient) getConnectionOptions(ctx context.Context, clusterId strin
 	}
 
 	if resp.StatusCode != 200 {
-		content := new(strings.Builder)
-		io.Copy(content, resp.Body)
-		return nil, fmt.Errorf("received non-200 status code: %d, %s", resp.StatusCode, content.String())
+		return nil, fmt.Errorf("received non-200 status code: %d", resp.StatusCode)
 	}
 
 	defer resp.Body.Close()
@@ -165,8 +163,6 @@ type PgxLogger struct {
 func (l PgxLogger) Log(level pgx.LogLevel, msg string, data map[string]interface{}) {
 	tflog.Debug(l.ctx, fmt.Sprintf("PGX: %s, %v", msg, data))
 }
-
-type queryLoggerHook struct{}
 
 func SqlConWithTempUser[Handler func(db *pgx.Conn) (*R, error), R any](ctx context.Context, client *CcloudClient, clusterId string, handler Handler) (res *R, err error) {
 	user, err := client.CreateTempUser(ctx, clusterId)
