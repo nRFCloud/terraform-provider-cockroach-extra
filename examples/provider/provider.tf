@@ -7,5 +7,5 @@ terraform {
 }
 
 provider "cockroach-extra" {
-  api_key = "<YOU API KEY>"
+  #  api_key = "<YOU API KEY>"
 }

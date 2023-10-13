@@ -97,7 +97,7 @@ func (r *ExternalConnectionResource) Create(ctx context.Context, req resource.Cr
 		return
 	}
 
-	_, err := SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), func(db *pgx.Conn) (*interface{}, error) {
+	_, err := SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), func(db *pgx.ConnPool) (*interface{}, error) {
 		_, err := db.Exec(fmt.Sprintf("CREATE EXTERNAL CONNECTION %s as $1", pgx.Identifier{data.ConnectionName.ValueString()}.Sanitize()), data.ConnectionUri.ValueString())
 		return nil, err
 	})
