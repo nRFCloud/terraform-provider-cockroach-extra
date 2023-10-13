@@ -3,6 +3,8 @@ package provider
 import (
 	"context"
 	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/nrfcloud/terraform-provider-cockroach-extra/internal/provider/ccloud"
+	"github.com/nrfcloud/terraform-provider-cockroach-extra/internal/provider/resources"
 	"os"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -82,14 +84,14 @@ func (p *CockroachExtraProvider) Configure(ctx context.Context, req provider.Con
 	}
 
 	// Example client configuration for data sources and resources
-	client := NewCcloudClient(ctx, apiKey)
+	client := ccloud.NewCcloudClient(ctx, apiKey)
 	resp.DataSourceData = client
 	resp.ResourceData = client
 }
 
 func (p *CockroachExtraProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
-		NewClusterSettingResource,
+		resources.NewClusterSettingResource,
 	}
 }
 

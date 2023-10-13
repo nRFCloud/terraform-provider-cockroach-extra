@@ -1,4 +1,4 @@
-package provider
+package ccloud
 
 import (
 	"bytes"
@@ -15,11 +15,11 @@ import (
 type CcloudClient struct {
 	ApiKey     string
 	Host       string
-	HttpClient *http.Client
+	httpClient *http.Client
 	sqlConMap  map[string]*pgx.ConnPool
 }
 
-const ClusterUserName = "terraform-provider-cockroach-extra"
+const clusterUserName = "terraform-provider-cockroach-extra"
 
 var userCredMapResource = NewSyncResourceHolder(&UserCredMap{})
 
@@ -30,30 +30,30 @@ func NewCcloudClient(ctx context.Context, apiKey string) *CcloudClient {
 	client := &CcloudClient{
 		ApiKey:     apiKey,
 		Host:       "https://cockroachlabs.cloud",
-		HttpClient: http.DefaultClient,
+		httpClient: http.DefaultClient,
 		sqlConMap:  make(map[string]*pgx.ConnPool),
 	}
 
 	return client
 }
 
-type TempUser struct {
+type tempUser struct {
 	Username string `json:"name"`
 	Password string `json:"password"`
 }
 
-type UserCredMap = map[string]*TempUser
+type UserCredMap = map[string]*tempUser
 
-func GenerateAuthHeader(apiKey string) string {
+func generateAuthHeader(apiKey string) string {
 	return fmt.Sprintf("Bearer %s", apiKey)
 }
 
-func (c *CcloudClient) createTempUser(ctx context.Context, clusterId string) (*TempUser, error) {
-	c.DeleteTempUser(ctx, clusterId, ClusterUserName)
+func (c *CcloudClient) createTempUser(ctx context.Context, clusterId string) (*tempUser, error) {
+	c.deleteTempUser(ctx, clusterId, clusterUserName)
 
 	path := fmt.Sprintf("/api/v1/clusters/%s/sql-users", clusterId)
-	request := TempUser{
-		Username: ClusterUserName,
+	request := tempUser{
+		Username: clusterUserName,
 		Password: uuid.New().String(),
 	}
 
@@ -71,10 +71,10 @@ func (c *CcloudClient) createTempUser(ctx context.Context, clusterId string) (*T
 		return nil, err
 	}
 
-	req.Header.Add("Authorization", GenerateAuthHeader(c.ApiKey))
+	req.Header.Add("Authorization", generateAuthHeader(c.ApiKey))
 	req.Header.Add("Content-Type", "application/json")
 
-	resp, err := c.HttpClient.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -94,8 +94,8 @@ func (c *CcloudClient) createTempUser(ctx context.Context, clusterId string) (*T
 	return &request, nil
 }
 
-func (c *CcloudClient) updateUserExpiration(ctx context.Context, clusterId string, user *TempUser) error {
-	pool, err := c.GetOrCreateConPool(ctx, clusterId, user)
+func (c *CcloudClient) updateUserExpiration(ctx context.Context, clusterId string, user *tempUser) error {
+	pool, err := c.getOrCreateConPool(ctx, clusterId, user)
 
 	if err != nil {
 		return err
@@ -105,7 +105,7 @@ func (c *CcloudClient) updateUserExpiration(ctx context.Context, clusterId strin
 	return err
 }
 
-func (c *CcloudClient) GetOrCreateTempUser(ctx context.Context, userCredMap *UserCredMap, clusterId string) (*TempUser, error) {
+func (c *CcloudClient) getOrCreateTempUser(ctx context.Context, userCredMap *UserCredMap, clusterId string) (*tempUser, error) {
 	credMap := *userCredMap
 	if credMap[clusterId] == nil {
 		tflog.Debug(ctx, fmt.Sprintf("Creating temp user for cluster %s", clusterId))
@@ -120,7 +120,7 @@ func (c *CcloudClient) GetOrCreateTempUser(ctx context.Context, userCredMap *Use
 	return credMap[clusterId], nil
 }
 
-func (c *CcloudClient) DeleteTempUser(ctx context.Context, clusterId string, username string) error {
+func (c *CcloudClient) deleteTempUser(ctx context.Context, clusterId string, username string) error {
 	path := fmt.Sprintf("/api/v1/clusters/%s/sql-users/%s", clusterId, username)
 
 	req, err := http.NewRequest("DELETE", c.Host+path, nil)
@@ -128,9 +128,9 @@ func (c *CcloudClient) DeleteTempUser(ctx context.Context, clusterId string, use
 		return err
 	}
 
-	req.Header.Add("Authorization", GenerateAuthHeader(c.ApiKey))
+	req.Header.Add("Authorization", generateAuthHeader(c.ApiKey))
 
-	resp, err := c.HttpClient.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -155,7 +155,7 @@ type ConnectionStringResponse struct {
 	Params           ConnectionStringResponseParams `json:"params"`
 }
 
-func (c *CcloudClient) getConnectionOptions(ctx context.Context, clusterId string, user *TempUser) (*pgx.ConnConfig, error) {
+func (c *CcloudClient) getConnectionOptions(ctx context.Context, clusterId string, user *tempUser) (*pgx.ConnConfig, error) {
 	path := fmt.Sprintf("/api/v1/clusters/%s/connection-string?sql_user=%s", clusterId, user.Username)
 	req, err := http.NewRequest("GET", c.Host+path, nil)
 	if err != nil {
@@ -163,9 +163,9 @@ func (c *CcloudClient) getConnectionOptions(ctx context.Context, clusterId strin
 		return nil, err
 	}
 
-	req.Header.Add("Authorization", GenerateAuthHeader(c.ApiKey))
+	req.Header.Add("Authorization", generateAuthHeader(c.ApiKey))
 
-	resp, err := c.HttpClient.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -194,13 +194,13 @@ func (c *CcloudClient) getConnectionOptions(ctx context.Context, clusterId strin
 	opts.Password = user.Password
 	opts.User = user.Username
 
-	opts.Logger = PgxLogger{ctx: ctx}
+	opts.Logger = pgxLogger{ctx: ctx}
 	opts.LogLevel = pgx.LogLevelTrace
 
 	return &opts, nil
 }
 
-func (c *CcloudClient) GetOrCreateConPool(ctx context.Context, clusterId string, user *TempUser) (*pgx.ConnPool, error) {
+func (c *CcloudClient) getOrCreateConPool(ctx context.Context, clusterId string, user *tempUser) (*pgx.ConnPool, error) {
 	if c.sqlConMap[clusterId] == nil {
 		tflog.Debug(ctx, fmt.Sprintf("Creating connection pool for cluster %s", clusterId))
 		connConfig, err := c.getConnectionOptions(ctx, clusterId, user)
@@ -224,11 +224,11 @@ func (c *CcloudClient) GetOrCreateConPool(ctx context.Context, clusterId string,
 	return c.sqlConMap[clusterId], nil
 }
 
-type PgxLogger struct {
+type pgxLogger struct {
 	ctx context.Context
 }
 
-func (l PgxLogger) Log(level pgx.LogLevel, msg string, data map[string]interface{}) {
+func (l pgxLogger) Log(level pgx.LogLevel, msg string, data map[string]interface{}) {
 	tflog.Debug(l.ctx, fmt.Sprintf("PGX: %s, %v", msg, data))
 }
 
@@ -236,7 +236,7 @@ func SqlConWithTempUser[Handler func(db *pgx.ConnPool) (*R, error), R any](ctx c
 	userCredMap, unlock := userCredMapResource.Get()
 	defer unlock()
 
-	user, err := client.GetOrCreateTempUser(ctx, userCredMap, clusterId)
+	user, err := client.getOrCreateTempUser(ctx, userCredMap, clusterId)
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +245,7 @@ func SqlConWithTempUser[Handler func(db *pgx.ConnPool) (*R, error), R any](ctx c
 	if err != nil {
 		return nil, err
 	}
-	pool, err := client.GetOrCreateConPool(ctx, clusterId, user)
+	pool, err := client.getOrCreateConPool(ctx, clusterId, user)
 
 	if err != nil {
 		return nil, err
