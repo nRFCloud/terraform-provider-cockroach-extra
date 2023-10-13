@@ -14,6 +14,7 @@ import (
 
 // Ensure CockroachExtraProvider satisfies various provider interfaces.
 var _ provider.Provider = &CockroachExtraProvider{}
+var _ provider.ProviderWithMetaSchema
 
 // CockroachExtraProvider defines the provider implementation.
 type CockroachExtraProvider struct {
@@ -81,7 +82,7 @@ func (p *CockroachExtraProvider) Configure(ctx context.Context, req provider.Con
 	}
 
 	// Example client configuration for data sources and resources
-	client := NewCcloudClient(apiKey)
+	client := NewCcloudClient(ctx, apiKey)
 	resp.DataSourceData = client
 	resp.ResourceData = client
 }
