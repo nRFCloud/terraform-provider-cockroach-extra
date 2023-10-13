@@ -1,4 +1,4 @@
-package provider
+package resources
 
 // TODO: Implement the external connection resource
 
@@ -11,10 +11,11 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/jackc/pgx"
+	"github.com/nrfcloud/terraform-provider-cockroach-extra/internal/provider/ccloud"
 )
 
 type ExternalConnectionResource struct {
-	client *CcloudClient
+	client *ccloud.CcloudClient
 }
 
 type ExternalConnectionResourceModel struct {
@@ -77,7 +78,7 @@ func (r *ExternalConnectionResource) Configure(ctx context.Context, req resource
 		return
 	}
 
-	client, ok := req.ProviderData.(*CcloudClient)
+	client, ok := req.ProviderData.(*ccloud.CcloudClient)
 
 	if !ok {
 		resp.Diagnostics.AddError("Unexpected provider data type",
@@ -97,7 +98,7 @@ func (r *ExternalConnectionResource) Create(ctx context.Context, req resource.Cr
 		return
 	}
 
-	_, err := SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), func(db *pgx.ConnPool) (*interface{}, error) {
+	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), func(db *pgx.ConnPool) (*interface{}, error) {
 		_, err := db.Exec(fmt.Sprintf("CREATE EXTERNAL CONNECTION %s as $1", pgx.Identifier{data.ConnectionName.ValueString()}.Sanitize()), data.ConnectionUri.ValueString())
 		return nil, err
 	})
