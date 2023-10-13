@@ -100,7 +100,7 @@ func (c *CcloudClient) updateUserExpiration(ctx context.Context, clusterId strin
 	if err != nil {
 		return err
 	}
-	expTime := time.Now().Add(1 * time.Hour)
+	expTime := time.Now().Add(4 * time.Minute)
 	_, err = pool.Exec(fmt.Sprintf("ALTER USER %s WITH VALID UNTIL $1", pgx.Identifier{user.Username}.Sanitize()), expTime.Format(time.RFC3339))
 	return err
 }
