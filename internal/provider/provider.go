@@ -92,6 +92,9 @@ func (p *CockroachExtraProvider) Configure(ctx context.Context, req provider.Con
 func (p *CockroachExtraProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		resources.NewClusterSettingResource,
+		resources.NewRoleGrantResource,
+		resources.NewSqlUserResource,
+		resources.NewSqlRoleResource,
 	}
 }
 
