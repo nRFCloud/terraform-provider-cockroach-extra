@@ -282,16 +282,16 @@ func (r *MigrationResource) Delete(ctx context.Context, req resource.DeleteReque
 
 		sourceDriver, err := getSourceDriver(data.MigrationsUrl.ValueString())
 
+		if err != nil {
+			return nil, err
+		}
+
 		defer func(sourceDriver source.Driver) {
 			err := sourceDriver.Close()
 			if err != nil {
 				return
 			}
 		}(sourceDriver)
-
-		if err != nil {
-			return nil, err
-		}
 
 		migrator, err := migrate.NewWithInstance(data.MigrationsUrl.ValueString(), sourceDriver, data.Database.ValueString(), driver)
 		if err != nil {
