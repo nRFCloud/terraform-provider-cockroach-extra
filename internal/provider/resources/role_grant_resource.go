@@ -25,8 +25,8 @@ type RoleGrantResource struct {
 
 type RoleGrantResourceModel struct {
 	ClusterId types.String `tfsdk:"cluster_id"`
-	Username  types.String `tfsdk:"username"`
-	Role      types.String `tfsdk:"role"`
+	Username  types.String `tfsdk:"user_name"`
+	Role      types.String `tfsdk:"role_name"`
 	Id        types.String `tfsdk:"id"`
 }
 
@@ -45,14 +45,14 @@ func (r *RoleGrantResource) Schema(ctx context.Context, req resource.SchemaReque
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"username": schema.StringAttribute{
+			"user_name": schema.StringAttribute{
 				MarkdownDescription: "Username",
 				Required:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"role": schema.StringAttribute{
+			"role_name": schema.StringAttribute{
 				MarkdownDescription: "Role",
 				Required:            true,
 				PlanModifiers: []planmodifier.String{
@@ -97,7 +97,7 @@ func (r *RoleGrantResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 
-	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), func(db *pgx.ConnPool) (*interface{}, error) {
+	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*interface{}, error) {
 		_, err := db.Exec(fmt.Sprintf("GRANT %s TO %s", pgx.Identifier{data.Role.ValueString()}.Sanitize(), pgx.Identifier{data.Username.ValueString()}.Sanitize()))
 		return nil, err
 	})
@@ -121,7 +121,7 @@ func (r *RoleGrantResource) Read(ctx context.Context, req resource.ReadRequest, 
 		return
 	}
 
-	result, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), func(db *pgx.ConnPool) (*bool, error) {
+	result, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*bool, error) {
 		// If the role is not found, the query will return an empty row
 		var result bool
 		var response int
@@ -167,7 +167,7 @@ func (r *RoleGrantResource) Delete(ctx context.Context, req resource.DeleteReque
 		return
 	}
 
-	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), func(db *pgx.ConnPool) (*interface{}, error) {
+	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*interface{}, error) {
 		_, err := db.Exec(fmt.Sprintf("REVOKE %s FROM %s", pgx.Identifier{data.Role.ValueString()}.Sanitize(), pgx.Identifier{data.Username.ValueString()}.Sanitize()))
 		return nil, err
 	})

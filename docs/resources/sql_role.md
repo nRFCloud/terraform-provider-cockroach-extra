@@ -18,7 +18,7 @@ Create a SQL user
 ### Required
 
 - `cluster_id` (String) Cluster ID
-- `role_name` (String) Username
+- `name` (String) Username
 
 ### Read-Only
 

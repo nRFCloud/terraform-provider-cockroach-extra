@@ -4,9 +4,11 @@ go 1.19
 
 require (
 	github.com/go-pg/pg/v10 v10.11.1
+	github.com/golang-migrate/migrate v3.5.4+incompatible
 	github.com/google/uuid v1.3.0
 	github.com/hashicorp/terraform-plugin-docs v0.16.0
 	github.com/hashicorp/terraform-plugin-framework v1.4.0
+	github.com/hashicorp/terraform-plugin-framework-validators v0.12.0
 	github.com/hashicorp/terraform-plugin-go v0.19.0
 	github.com/hashicorp/terraform-plugin-log v0.9.0
 	github.com/hashicorp/terraform-plugin-testing v1.5.1
@@ -24,6 +26,7 @@ require (
 	github.com/bgentry/speakeasy v0.1.0 // indirect
 	github.com/cloudflare/circl v1.3.3 // indirect
 	github.com/cockroachdb/apd v1.1.0 // indirect
+	github.com/cockroachdb/cockroach-go v2.0.1+incompatible // indirect
 	github.com/fatih/color v1.13.0 // indirect
 	github.com/go-pg/zerochecker v0.2.0 // indirect
 	github.com/gofrs/uuid v4.4.0+incompatible // indirect
@@ -43,7 +46,6 @@ require (
 	github.com/hashicorp/logutils v1.0.0 // indirect
 	github.com/hashicorp/terraform-exec v0.19.0 // indirect
 	github.com/hashicorp/terraform-json v0.17.1 // indirect
-	github.com/hashicorp/terraform-plugin-framework-validators v0.12.0 // indirect
 	github.com/hashicorp/terraform-plugin-sdk/v2 v2.29.0 // indirect
 	github.com/hashicorp/terraform-registry-address v0.2.2 // indirect
 	github.com/hashicorp/terraform-svchost v0.1.1 // indirect

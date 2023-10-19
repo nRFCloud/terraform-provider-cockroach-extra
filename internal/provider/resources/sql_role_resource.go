@@ -24,7 +24,7 @@ type SqlRoleResource struct {
 
 type SqlRoleResourceModel struct {
 	ClusterId types.String `tfsdk:"cluster_id"`
-	RoleName  types.String `tfsdk:"role_name"`
+	RoleName  types.String `tfsdk:"name"`
 	Id        types.String `tfsdk:"id"`
 }
 
@@ -43,7 +43,7 @@ func (r *SqlRoleResource) Schema(ctx context.Context, req resource.SchemaRequest
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"role_name": schema.StringAttribute{
+			"name": schema.StringAttribute{
 				MarkdownDescription: "Username",
 				Required:            true,
 				PlanModifiers: []planmodifier.String{
@@ -87,7 +87,7 @@ func (r *SqlRoleResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
-	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), func(db *pgx.ConnPool) (*interface{}, error) {
+	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*interface{}, error) {
 		_, err := db.Exec(fmt.Sprintf("CREATE ROLE %s", pgx.Identifier{data.RoleName.ValueString()}.Sanitize()))
 		return nil, err
 	})
@@ -111,7 +111,7 @@ func (r *SqlRoleResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
-	exists, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), func(db *pgx.ConnPool) (*bool, error) {
+	exists, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*bool, error) {
 		var result bool
 		err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM [SHOW USERS] WHERE username = $1)", data.RoleName.ValueString()).Scan(&result)
 		return &result, err
@@ -142,7 +142,7 @@ func (r *SqlRoleResource) Delete(ctx context.Context, req resource.DeleteRequest
 		return
 	}
 
-	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), func(db *pgx.ConnPool) (*interface{}, error) {
+	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*interface{}, error) {
 		_, err := db.Exec(fmt.Sprintf("DROP ROLE %s", pgx.Identifier{data.RoleName.ValueString()}.Sanitize()))
 		return nil, err
 	})
