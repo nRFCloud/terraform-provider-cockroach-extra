@@ -17,7 +17,7 @@ type CcloudClient struct {
 	ApiKey     string
 	Host       string
 	httpClient *http.Client
-	sqlConMap  map[string]*pgx.ConnPool
+	sqlConMap  map[string]map[string]*pgx.ConnPool
 }
 
 const clusterUserName = "terraform-provider-cockroach-extra"
@@ -32,7 +32,7 @@ func NewCcloudClient(ctx context.Context, apiKey string) *CcloudClient {
 		ApiKey:     apiKey,
 		Host:       "https://cockroachlabs.cloud",
 		httpClient: http.DefaultClient,
-		sqlConMap:  make(map[string]*pgx.ConnPool),
+		sqlConMap:  make(map[string]map[string]*pgx.ConnPool),
 	}
 
 	return client
@@ -235,7 +235,7 @@ func (c *CcloudClient) getConnectionOptions(ctx context.Context, clusterId strin
 }
 
 func (c *CcloudClient) getOrCreateConPool(ctx context.Context, clusterId string, user *tempUser, database string) (*pgx.ConnPool, error) {
-	if c.sqlConMap[clusterId] == nil {
+	if c.sqlConMap[clusterId][database] == nil {
 		tflog.Debug(ctx, fmt.Sprintf("Creating connection pool for cluster %s", clusterId))
 		connConfig, err := c.getConnectionOptions(ctx, clusterId, user, database)
 
@@ -247,7 +247,11 @@ func (c *CcloudClient) getOrCreateConPool(ctx context.Context, clusterId string,
 			ConnConfig:     *connConfig,
 			MaxConnections: 5,
 		}
-		c.sqlConMap[clusterId], err = pgx.NewConnPool(config)
+		if c.sqlConMap[clusterId] == nil {
+			c.sqlConMap[clusterId] = make(map[string]*pgx.ConnPool)
+		}
+
+		c.sqlConMap[clusterId][database], err = pgx.NewConnPool(config)
 
 		if err != nil {
 			return nil, err
@@ -255,7 +259,7 @@ func (c *CcloudClient) getOrCreateConPool(ctx context.Context, clusterId string,
 	} else {
 		tflog.Debug(ctx, fmt.Sprintf("Using existing connection pool for cluster %s", clusterId))
 	}
-	return c.sqlConMap[clusterId], nil
+	return c.sqlConMap[clusterId][database], nil
 }
 
 type pgxLogger struct {
@@ -285,8 +289,8 @@ func SqlConWithTempUser[Handler func(db *pgx.ConnPool) (*R, error), R any](ctx c
 		return nil, err
 	}
 
-	defer func(pool *pgx.ConnPool, sql string, arguments ...interface{}) {
-		_, err := pool.Exec(sql, arguments)
+	defer func(pool *pgx.ConnPool, sql string) {
+		_, err := pool.Exec(sql)
 		if err != nil {
 			return
 		}

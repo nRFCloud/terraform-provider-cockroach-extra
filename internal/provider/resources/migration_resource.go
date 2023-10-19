@@ -3,10 +3,14 @@ package resources
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/golang-migrate/migrate"
 	"github.com/golang-migrate/migrate/database/cockroachdb"
 	"github.com/golang-migrate/migrate/source"
-	"github.com/golang-migrate/migrate/source/file"
+	_ "github.com/golang-migrate/migrate/source/aws_s3"
+	_ "github.com/golang-migrate/migrate/source/file"
+	_ "github.com/golang-migrate/migrate/source/github"
+	_ "github.com/golang-migrate/migrate/source/google_cloud_storage"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -14,9 +18,11 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/jackc/pgx"
 	"github.com/jackc/pgx/stdlib"
 	"github.com/nrfcloud/terraform-provider-cockroach-extra/internal/provider/ccloud"
+	"os"
 )
 
 type MigrationResource struct {
@@ -24,12 +30,12 @@ type MigrationResource struct {
 }
 
 type MigrationResourceModel struct {
-	ClusterId           types.String `tfsdk:"cluster_id"`
-	Database            types.String `tfsdk:"database"`
-	MigrationsDirectory types.String `tfsdk:"migrations_directory"`
-	DestroyMode         types.String `tfsdk:"destroy_mode"`
-	Version             types.Int64  `tfsdk:"version"`
-	Id                  types.String `tfsdk:"id"`
+	ClusterId     types.String `tfsdk:"cluster_id"`
+	Database      types.String `tfsdk:"database"`
+	MigrationsUrl types.String `tfsdk:"migrations_url"`
+	DestroyMode   types.String `tfsdk:"destroy_mode"`
+	Version       types.Int64  `tfsdk:"version"`
+	Id            types.String `tfsdk:"id"`
 }
 
 var _ resource.Resource = &MigrationResource{}
@@ -70,8 +76,8 @@ func (r *MigrationResource) Schema(ctx context.Context, req resource.SchemaReque
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"migrations_directory": schema.StringAttribute{
-				MarkdownDescription: "Path to the migrations directory",
+			"migrations_url": schema.StringAttribute{
+				MarkdownDescription: "Url pointing to your migrations (ex: file://path/to/migrations)",
 				Required:            true,
 			},
 			"destroy_mode": schema.StringAttribute{
@@ -99,9 +105,20 @@ func (r *MigrationResource) Metadata(ctx context.Context, req resource.MetadataR
 	resp.TypeName = req.ProviderTypeName + "_migration"
 }
 
-func getSourceDriver(path string) (source.Driver, error) {
-	driver := file.File{}
-	return driver.Open(path)
+func getSourceDriver(url string) (source.Driver, error) {
+	return source.Open(url)
+}
+
+type MigrationLogger struct {
+	ctx context.Context
+}
+
+func (l MigrationLogger) Printf(format string, v ...interface{}) {
+	tflog.Debug(l.ctx, fmt.Sprintf(format, v...))
+}
+
+func (l MigrationLogger) Verbose() bool {
+	return true
 }
 
 func (r *MigrationResource) runMigrations(ctx context.Context, data *MigrationResourceModel) (*uint, error) {
@@ -112,7 +129,7 @@ func (r *MigrationResource) runMigrations(ctx context.Context, data *MigrationRe
 			return nil, err
 		}
 
-		sourceDriver, err := getSourceDriver(data.MigrationsDirectory.ValueString())
+		sourceDriver, err := getSourceDriver(data.MigrationsUrl.ValueString())
 
 		if err != nil {
 			return nil, err
@@ -120,11 +137,12 @@ func (r *MigrationResource) runMigrations(ctx context.Context, data *MigrationRe
 
 		defer sourceDriver.Close()
 
-		migrator, err := migrate.NewWithInstance(data.MigrationsDirectory.ValueString(), sourceDriver, data.Database.ValueString(), driver)
+		migrator, err := migrate.NewWithInstance(data.MigrationsUrl.ValueString(), sourceDriver, data.Database.ValueString(), driver)
 
 		if err != nil {
 			return nil, err
 		}
+		migrator.Log = MigrationLogger{ctx: ctx}
 
 		err = migrator.Migrate(uint(data.Version.ValueInt64()))
 		if err != nil {
@@ -132,6 +150,10 @@ func (r *MigrationResource) runMigrations(ctx context.Context, data *MigrationRe
 		}
 
 		version, _, err := migrator.Version()
+
+		if err != nil {
+			return nil, err
+		}
 
 		return &version, err
 	})
@@ -149,6 +171,9 @@ func (r *MigrationResource) Create(ctx context.Context, req resource.CreateReque
 	version, err := r.runMigrations(ctx, &data)
 
 	if err != nil {
+		if os.IsNotExist(err) {
+			tflog.Error(ctx, fmt.Sprintf("Path err %v", err))
+		}
 		resp.Diagnostics.AddError("Error running migrations", err.Error())
 		return
 	}
@@ -168,7 +193,15 @@ func (r *MigrationResource) Read(ctx context.Context, req resource.ReadRequest, 
 		return
 	}
 
-	sourceDriver, err := getSourceDriver(data.MigrationsDirectory.ValueString())
+	tempDir, err := os.MkdirTemp("", "migration_resource")
+
+	if err != nil {
+		return
+	}
+
+	defer os.RemoveAll(tempDir)
+
+	sourceDriver, err := getSourceDriver(fmt.Sprintf("file://%s", tempDir))
 
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading migrations", err.Error())
@@ -181,7 +214,7 @@ func (r *MigrationResource) Read(ctx context.Context, req resource.ReadRequest, 
 		if err != nil {
 			return nil, err
 		}
-		migrator, err := migrate.NewWithInstance(data.MigrationsDirectory.ValueString(), sourceDriver, data.Database.ValueString(), dbDriver)
+		migrator, err := migrate.NewWithInstance(data.MigrationsUrl.ValueString(), sourceDriver, data.Database.ValueString(), dbDriver)
 		if err != nil {
 			return nil, err
 		}
@@ -247,7 +280,7 @@ func (r *MigrationResource) Delete(ctx context.Context, req resource.DeleteReque
 			return nil, err
 		}
 
-		sourceDriver, err := getSourceDriver(data.MigrationsDirectory.ValueString())
+		sourceDriver, err := getSourceDriver(data.MigrationsUrl.ValueString())
 
 		defer func(sourceDriver source.Driver) {
 			err := sourceDriver.Close()
@@ -260,7 +293,7 @@ func (r *MigrationResource) Delete(ctx context.Context, req resource.DeleteReque
 			return nil, err
 		}
 
-		migrator, err := migrate.NewWithInstance(data.MigrationsDirectory.ValueString(), sourceDriver, data.Database.ValueString(), driver)
+		migrator, err := migrate.NewWithInstance(data.MigrationsUrl.ValueString(), sourceDriver, data.Database.ValueString(), driver)
 		if err != nil {
 			return nil, err
 		}
