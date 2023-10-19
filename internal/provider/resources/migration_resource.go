@@ -240,7 +240,7 @@ func (r *MigrationResource) Delete(ctx context.Context, req resource.DeleteReque
 		return
 	}
 
-	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), data.Database.ValueString(), func(db *pgx.ConnPool) (*uint, error) {
+	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), data.Database.ValueString(), func(db *pgx.ConnPool) (res *interface{}, err error) {
 		stdDb := stdlib.OpenDBFromPool(db)
 		driver, err := cockroachdb.WithInstance(stdDb, &cockroachdb.Config{})
 		if err != nil {
@@ -249,7 +249,12 @@ func (r *MigrationResource) Delete(ctx context.Context, req resource.DeleteReque
 
 		sourceDriver, err := getSourceDriver(data.MigrationsDirectory.ValueString())
 
-		defer sourceDriver.Close()
+		defer func(sourceDriver source.Driver) {
+			err := sourceDriver.Close()
+			if err != nil {
+				return
+			}
+		}(sourceDriver)
 
 		if err != nil {
 			return nil, err
@@ -261,6 +266,9 @@ func (r *MigrationResource) Delete(ctx context.Context, req resource.DeleteReque
 		}
 		if data.DestroyMode.ValueString() == "drop" {
 			_, err = db.Exec("DROP DATABASE IF EXISTS " + pgx.Identifier{data.Database.ValueString()}.Sanitize())
+			if err != nil {
+				return nil, err
+			}
 			_, err = db.Exec("CREATE DATABASE IF NOT EXISTS " + pgx.Identifier{data.Database.ValueString()}.Sanitize())
 		} else {
 			err = migrator.Down()

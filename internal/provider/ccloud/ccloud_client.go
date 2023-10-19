@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/jackc/pgx"
+	"io"
 	"net/http"
 	"time"
 )
@@ -25,7 +26,7 @@ var userCredMapResource = NewSyncResourceHolder(&UserCredMap{})
 
 // NewCcloudClient returns a new CcloudClient.
 func NewCcloudClient(ctx context.Context, apiKey string) *CcloudClient {
-	tflog.Debug(ctx, fmt.Sprintf("Creating ccloud client with api key"))
+	tflog.Debug(ctx, "Creating ccloud client with api key")
 
 	client := &CcloudClient{
 		ApiKey:     apiKey,
@@ -48,8 +49,11 @@ func generateAuthHeader(apiKey string) string {
 	return fmt.Sprintf("Bearer %s", apiKey)
 }
 
-func (c *CcloudClient) createTempUser(ctx context.Context, clusterId string) (*tempUser, error) {
-	c.deleteTempUser(ctx, clusterId, clusterUserName)
+func (c *CcloudClient) createTempUser(ctx context.Context, clusterId string) (user *tempUser, err error) {
+	err = c.deleteTempUser(ctx, clusterId, clusterUserName)
+	if err != nil {
+		return nil, err
+	}
 
 	path := fmt.Sprintf("/api/v1/clusters/%s/sql-users", clusterId)
 	request := tempUser{
@@ -82,7 +86,10 @@ func (c *CcloudClient) createTempUser(ctx context.Context, clusterId string) (*t
 	if resp.StatusCode != 200 {
 		// read body content as string
 		buf := new(bytes.Buffer)
-		buf.ReadFrom(resp.Body)
+		_, err := buf.ReadFrom(resp.Body)
+		if err != nil {
+			return nil, err
+		}
 		bodyStr := buf.String()
 		return nil, fmt.Errorf("received non-200 status code: %d, body: %s", resp.StatusCode, bodyStr)
 	}
@@ -93,7 +100,12 @@ func (c *CcloudClient) createTempUser(ctx context.Context, clusterId string) (*t
 		return nil, err
 	}
 
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			return
+		}
+	}(resp.Body)
 
 	return &request, nil
 }
@@ -124,7 +136,7 @@ func (c *CcloudClient) getOrCreateTempUser(ctx context.Context, userCredMap *Use
 	return credMap[clusterId], nil
 }
 
-func (c *CcloudClient) deleteTempUser(ctx context.Context, clusterId string, username string) error {
+func (c *CcloudClient) deleteTempUser(ctx context.Context, clusterId string, username string) (err error) {
 	path := fmt.Sprintf("/api/v1/clusters/%s/sql-users/%s", clusterId, username)
 
 	req, err := http.NewRequest("DELETE", c.Host+path, nil)
@@ -141,12 +153,20 @@ func (c *CcloudClient) deleteTempUser(ctx context.Context, clusterId string, use
 
 	if resp.StatusCode != 200 {
 		body := new(bytes.Buffer)
-		body.ReadFrom(resp.Body)
+		_, err = body.ReadFrom(resp.Body)
+		if err != nil {
+			return err
+		}
 		tflog.Debug(ctx, fmt.Sprintf("Received non-200 status code: %d, body: %s", resp.StatusCode, body.String()))
 		return fmt.Errorf("received non-200 status code: %d", resp.StatusCode)
 	}
 
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			return
+		}
+	}(resp.Body)
 
 	return nil
 }
@@ -162,7 +182,7 @@ type ConnectionStringResponse struct {
 	Params           ConnectionStringResponseParams `json:"params"`
 }
 
-func (c *CcloudClient) getConnectionOptions(ctx context.Context, clusterId string, user *tempUser, database string) (*pgx.ConnConfig, error) {
+func (c *CcloudClient) getConnectionOptions(ctx context.Context, clusterId string, user *tempUser, database string) (con *pgx.ConnConfig, err error) {
 	path := fmt.Sprintf("/api/v1/clusters/%s/connection-string?sql_user=%s", clusterId, user.Username)
 	req, err := http.NewRequest("GET", c.Host+path, nil)
 	if err != nil {
@@ -181,7 +201,13 @@ func (c *CcloudClient) getConnectionOptions(ctx context.Context, clusterId strin
 		return nil, fmt.Errorf("received non-200 status code: %d", resp.StatusCode)
 	}
 
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			return
+		}
+	}(resp.Body)
+
 	// read json data
 	responseData := ConnectionStringResponse{}
 	err = json.NewDecoder(resp.Body).Decode(&responseData)
@@ -236,7 +262,7 @@ type pgxLogger struct {
 	ctx context.Context
 }
 
-func (l pgxLogger) Log(level pgx.LogLevel, msg string, data map[string]interface{}) {
+func (l pgxLogger) Log(_ pgx.LogLevel, msg string, data map[string]interface{}) {
 	tflog.Debug(l.ctx, fmt.Sprintf("PGX: %s, %v", msg, data))
 }
 
@@ -259,6 +285,12 @@ func SqlConWithTempUser[Handler func(db *pgx.ConnPool) (*R, error), R any](ctx c
 		return nil, err
 	}
 
-	defer pool.Exec(fmt.Sprintf("REASSIGN OWNED BY %s TO admin", pgx.Identifier{user.Username}.Sanitize()))
+	defer func(pool *pgx.ConnPool, sql string, arguments ...interface{}) {
+		_, err := pool.Exec(sql, arguments)
+		if err != nil {
+			return
+		}
+	}(pool, fmt.Sprintf("REASSIGN OWNED BY %s TO admin", pgx.Identifier{user.Username}.Sanitize()))
+
 	return handler(pool)
 }

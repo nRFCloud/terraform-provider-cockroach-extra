@@ -145,13 +145,13 @@ func (r *RoleGrantResource) Read(ctx context.Context, req resource.ReadRequest, 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
-// Role grants should never be updated in place, as they are immutable
-// Throw an error if the user tries to do so
+// Update Role grants should never be updated in place, as they are immutable.
+// Throw an error if the user tries to do so.
 func (r *RoleGrantResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var data RoleGrantResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
 
-	resp.Diagnostics.AddError("Role grants cannot be updated in place", fmt.Sprintf("Role grants cannot be updated in place. Please delete the resource and recreate it."))
+	resp.Diagnostics.AddError("Role grants cannot be updated in place", "Role grants cannot be updated in place. Please delete the resource and recreate it.")
 }
 
 func (r *RoleGrantResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
