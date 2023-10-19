@@ -18,8 +18,8 @@ Grant a role to a user
 ### Required
 
 - `cluster_id` (String) Cluster ID
-- `role` (String) Role
-- `username` (String) Username
+- `role_name` (String) Role
+- `user_name` (String) Username
 
 ### Read-Only
 

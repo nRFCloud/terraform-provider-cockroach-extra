@@ -80,7 +80,11 @@ func (c *CcloudClient) createTempUser(ctx context.Context, clusterId string) (*t
 	}
 
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("received non-200 status code: %d", resp.StatusCode)
+		// read body content as string
+		buf := new(bytes.Buffer)
+		buf.ReadFrom(resp.Body)
+		bodyStr := buf.String()
+		return nil, fmt.Errorf("received non-200 status code: %d, body: %s", resp.StatusCode, bodyStr)
 	}
 
 	err = c.updateUserExpiration(ctx, clusterId, &request)
@@ -95,7 +99,7 @@ func (c *CcloudClient) createTempUser(ctx context.Context, clusterId string) (*t
 }
 
 func (c *CcloudClient) updateUserExpiration(ctx context.Context, clusterId string, user *tempUser) error {
-	pool, err := c.getOrCreateConPool(ctx, clusterId, user)
+	pool, err := c.getOrCreateConPool(ctx, clusterId, user, "defaultdb")
 
 	if err != nil {
 		return err
@@ -136,6 +140,9 @@ func (c *CcloudClient) deleteTempUser(ctx context.Context, clusterId string, use
 	}
 
 	if resp.StatusCode != 200 {
+		body := new(bytes.Buffer)
+		body.ReadFrom(resp.Body)
+		tflog.Debug(ctx, fmt.Sprintf("Received non-200 status code: %d, body: %s", resp.StatusCode, body.String()))
 		return fmt.Errorf("received non-200 status code: %d", resp.StatusCode)
 	}
 
@@ -155,7 +162,7 @@ type ConnectionStringResponse struct {
 	Params           ConnectionStringResponseParams `json:"params"`
 }
 
-func (c *CcloudClient) getConnectionOptions(ctx context.Context, clusterId string, user *tempUser) (*pgx.ConnConfig, error) {
+func (c *CcloudClient) getConnectionOptions(ctx context.Context, clusterId string, user *tempUser, database string) (*pgx.ConnConfig, error) {
 	path := fmt.Sprintf("/api/v1/clusters/%s/connection-string?sql_user=%s", clusterId, user.Username)
 	req, err := http.NewRequest("GET", c.Host+path, nil)
 	if err != nil {
@@ -193,6 +200,7 @@ func (c *CcloudClient) getConnectionOptions(ctx context.Context, clusterId strin
 
 	opts.Password = user.Password
 	opts.User = user.Username
+	opts.Database = database
 
 	opts.Logger = pgxLogger{ctx: ctx}
 	opts.LogLevel = pgx.LogLevelTrace
@@ -200,10 +208,10 @@ func (c *CcloudClient) getConnectionOptions(ctx context.Context, clusterId strin
 	return &opts, nil
 }
 
-func (c *CcloudClient) getOrCreateConPool(ctx context.Context, clusterId string, user *tempUser) (*pgx.ConnPool, error) {
+func (c *CcloudClient) getOrCreateConPool(ctx context.Context, clusterId string, user *tempUser, database string) (*pgx.ConnPool, error) {
 	if c.sqlConMap[clusterId] == nil {
 		tflog.Debug(ctx, fmt.Sprintf("Creating connection pool for cluster %s", clusterId))
-		connConfig, err := c.getConnectionOptions(ctx, clusterId, user)
+		connConfig, err := c.getConnectionOptions(ctx, clusterId, user, database)
 
 		if err != nil {
 			return nil, err
@@ -232,7 +240,7 @@ func (l pgxLogger) Log(level pgx.LogLevel, msg string, data map[string]interface
 	tflog.Debug(l.ctx, fmt.Sprintf("PGX: %s, %v", msg, data))
 }
 
-func SqlConWithTempUser[Handler func(db *pgx.ConnPool) (*R, error), R any](ctx context.Context, client *CcloudClient, clusterId string, handler Handler) (res *R, err error) {
+func SqlConWithTempUser[Handler func(db *pgx.ConnPool) (*R, error), R any](ctx context.Context, client *CcloudClient, clusterId string, database string, handler Handler) (res *R, err error) {
 	userCredMap, unlock := userCredMapResource.Get()
 	defer unlock()
 
@@ -245,11 +253,12 @@ func SqlConWithTempUser[Handler func(db *pgx.ConnPool) (*R, error), R any](ctx c
 	if err != nil {
 		return nil, err
 	}
-	pool, err := client.getOrCreateConPool(ctx, clusterId, user)
+	pool, err := client.getOrCreateConPool(ctx, clusterId, user, database)
 
 	if err != nil {
 		return nil, err
 	}
 
+	defer pool.Exec(fmt.Sprintf("REASSIGN OWNED BY %s TO admin", pgx.Identifier{user.Username}.Sanitize()))
 	return handler(pool)
 }

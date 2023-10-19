@@ -85,7 +85,7 @@ func (r *ClusterSettingResource) Configure(ctx context.Context, req resource.Con
 }
 
 func (r *ClusterSettingResource) setClusterSetting(ctx context.Context, clusterId string, settingName string, settingValue string) error {
-	_, err := ccloud.SqlConWithTempUser(ctx, r.client, clusterId, func(db *pgx.ConnPool) (*interface{}, error) {
+	_, err := ccloud.SqlConWithTempUser(ctx, r.client, clusterId, "defaultdb", func(db *pgx.ConnPool) (*interface{}, error) {
 		_, err := db.Exec(fmt.Sprintf("SET CLUSTER SETTING %s = $1", pgx.Identifier{settingName}.Sanitize()), settingValue)
 		return nil, err
 	})
@@ -115,7 +115,7 @@ func (r *ClusterSettingResource) Create(ctx context.Context, req resource.Create
 }
 
 func (r *ClusterSettingResource) getClusterSetting(ctx context.Context, clusterId string, settingName string) (*string, error) {
-	return ccloud.SqlConWithTempUser(ctx, r.client, clusterId, func(db *pgx.ConnPool) (*string, error) {
+	return ccloud.SqlConWithTempUser(ctx, r.client, clusterId, "defaultdb", func(db *pgx.ConnPool) (*string, error) {
 		var value string
 
 		// Funky query that casts the resulting type to a string
@@ -177,7 +177,7 @@ func (r *ClusterSettingResource) Delete(ctx context.Context, req resource.Delete
 		return
 	}
 
-	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), func(db *pgx.ConnPool) (*interface{}, error) {
+	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*interface{}, error) {
 		_, err := db.Exec(fmt.Sprintf("RESET CLUSTER SETTING %s", pgx.Identifier{data.SettingName.ValueString()}.Sanitize()))
 		return nil, err
 	})

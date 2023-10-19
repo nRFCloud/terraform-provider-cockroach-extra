@@ -247,7 +247,7 @@ func (r *BackupScheduleResource) Create(ctx context.Context, req resource.Create
 	// Build query
 	query := fmt.Sprintf("%s %s %s %s %s %s", header, target, location, backupOptions, schedule, scheduleOptions)
 
-	scheduleId, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), func(db *pgx.ConnPool) (*string, error) {
+	scheduleId, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*string, error) {
 		var scheduleId string
 		err := db.QueryRow(query, nil).Scan(&scheduleId)
 		return &scheduleId, err

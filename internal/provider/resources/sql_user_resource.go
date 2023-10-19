@@ -24,7 +24,7 @@ type SqlUserResource struct {
 
 type SqlUserResourceModel struct {
 	ClusterId types.String `tfsdk:"cluster_id"`
-	Username  types.String `tfsdk:"username"`
+	Username  types.String `tfsdk:"name"`
 	Password  types.String `tfsdk:"password"`
 	Id        types.String `tfsdk:"id"`
 }
@@ -44,7 +44,7 @@ func (r *SqlUserResource) Schema(ctx context.Context, req resource.SchemaRequest
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"username": schema.StringAttribute{
+			"name": schema.StringAttribute{
 				MarkdownDescription: "Username",
 				Required:            true,
 				PlanModifiers: []planmodifier.String{
@@ -93,7 +93,7 @@ func (r *SqlUserResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
-	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), func(db *pgx.ConnPool) (*interface{}, error) {
+	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*interface{}, error) {
 		if data.Password.IsNull() {
 			_, err := db.Exec(fmt.Sprintf("CREATE USER %s", pgx.Identifier{data.Username.ValueString()}.Sanitize()))
 			return nil, err
@@ -122,7 +122,7 @@ func (r *SqlUserResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
-	exists, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), func(db *pgx.ConnPool) (*bool, error) {
+	exists, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*bool, error) {
 		var result bool
 		err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM [SHOW USERS] WHERE username = $1)", data.Username.ValueString()).Scan(&result)
 		return &result, err
@@ -149,7 +149,7 @@ func (r *SqlUserResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 
-	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), func(db *pgx.ConnPool) (*interface{}, error) {
+	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*interface{}, error) {
 		_, err := db.Exec(fmt.Sprintf("ALTER USER %s WITH PASSWORD $1", pgx.Identifier{data.Username.ValueString()}.Sanitize()), data.Password.ValueString())
 		return nil, err
 	})
@@ -171,7 +171,7 @@ func (r *SqlUserResource) Delete(ctx context.Context, req resource.DeleteRequest
 		return
 	}
 
-	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), func(db *pgx.ConnPool) (*interface{}, error) {
+	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*interface{}, error) {
 		_, err := db.Exec(fmt.Sprintf("DROP USER %s", pgx.Identifier{data.Username.ValueString()}.Sanitize()))
 		return nil, err
 	})
