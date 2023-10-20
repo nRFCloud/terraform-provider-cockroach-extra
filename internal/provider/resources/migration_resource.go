@@ -145,7 +145,7 @@ func (r *MigrationResource) runMigrations(ctx context.Context, data *MigrationRe
 		migrator.Log = MigrationLogger{ctx: ctx}
 
 		err = migrator.Migrate(uint(data.Version.ValueInt64()))
-		if err != nil {
+		if err != nil && !errors.Is(err, migrate.ErrNoChange) {
 			return nil, err
 		}
 
