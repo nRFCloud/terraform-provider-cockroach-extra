@@ -151,7 +151,7 @@ func (c *CcloudClient) deleteTempUser(ctx context.Context, clusterId string, use
 		return err
 	}
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != 200 && resp.StatusCode != 500 && resp.StatusCode != 404 {
 		body := new(bytes.Buffer)
 		_, err = body.ReadFrom(resp.Body)
 		if err != nil {
