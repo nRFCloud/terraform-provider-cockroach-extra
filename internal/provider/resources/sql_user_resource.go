@@ -95,10 +95,10 @@ func (r *SqlUserResource) Create(ctx context.Context, req resource.CreateRequest
 
 	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*interface{}, error) {
 		if data.Password.IsNull() {
-			_, err := db.Exec(fmt.Sprintf("CREATE USER %s", pgx.Identifier{data.Username.ValueString()}.Sanitize()))
+			_, err := db.Exec(fmt.Sprintf("CREATE USER IF NOT EXISTS %s", pgx.Identifier{data.Username.ValueString()}.Sanitize()))
 			return nil, err
 		} else {
-			_, err := db.Exec(fmt.Sprintf("CREATE USER %s WITH PASSWORD $1", pgx.Identifier{data.Username.ValueString()}.Sanitize()), data.Password.ValueString())
+			_, err := db.Exec(fmt.Sprintf("CREATE USER IF NOT EXISTS %s WITH PASSWORD $1", pgx.Identifier{data.Username.ValueString()}.Sanitize()), data.Password.ValueString())
 			return nil, err
 		}
 	})
