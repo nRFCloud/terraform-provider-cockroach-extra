@@ -88,7 +88,7 @@ func (r *SqlRoleResource) Create(ctx context.Context, req resource.CreateRequest
 	}
 
 	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*interface{}, error) {
-		_, err := db.Exec(fmt.Sprintf("CREATE ROLE %s", pgx.Identifier{data.RoleName.ValueString()}.Sanitize()))
+		_, err := db.Exec(fmt.Sprintf("CREATE ROLE IF NOT EXISTS %s", pgx.Identifier{data.RoleName.ValueString()}.Sanitize()))
 		return nil, err
 	})
 
