@@ -227,7 +227,6 @@ func (c *CcloudClient) getConnectionOptions(ctx context.Context, clusterId strin
 	opts.Password = user.Password
 	opts.User = user.Username
 	opts.Database = database
-
 	opts.Logger = pgxLogger{ctx: ctx}
 	opts.LogLevel = pgx.LogLevelTrace
 
@@ -246,6 +245,10 @@ func (c *CcloudClient) getOrCreateConPool(ctx context.Context, clusterId string,
 		config := pgx.ConnPoolConfig{
 			ConnConfig:     *connConfig,
 			MaxConnections: 5,
+			AfterConnect: func(conn *pgx.Conn) error {
+				_, err := conn.Exec("SET role admin")
+				return err
+			},
 		}
 		if c.sqlConMap[clusterId] == nil {
 			c.sqlConMap[clusterId] = make(map[string]*pgx.ConnPool)
