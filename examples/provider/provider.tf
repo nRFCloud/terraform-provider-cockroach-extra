@@ -6,12 +6,10 @@ terraform {
   }
 }
 
-resource "cockroach-extra_migration" "cool-migration" {
-  cluster_id     = "29fd13f0-32a0-42e6-bf51-e7c3c5bbd03e"
-  migrations_url = "file://migrations"
-  destroy_mode   = "drop"
-  database       = "migration-test"
-  version        = 20231019210913
+resource "cockroach-extra_cluster_setting" "set_issuers" {
+  cluster_id    = "a09677a4-5497-4c7a-af42-b8932dafb3a2"
+  setting_name  = "server.jwt_authentication.issuers"
+  setting_value = "other"
 }
 
 provider "cockroach-extra" {
