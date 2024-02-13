@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -118,10 +119,13 @@ func (r *SqlRoleResource) Read(ctx context.Context, req resource.ReadRequest, re
 	})
 
 	if err != nil {
-		resp.Diagnostics.AddError("error checking role", err.Error())
-		return
+		if errors.Is(err, &ccloud.CockroachCloudClusterNotReadyError{}) || errors.Is(err, &ccloud.CockroachCloudClusterNotFoundError{}) {
+			*exists = false
+		} else {
+			resp.Diagnostics.AddError("error checking role", err.Error())
+			return
+		}
 	}
-
 	if !*exists {
 		data.Id = types.StringNull()
 	}

@@ -24,6 +24,57 @@ const clusterUserName = "terraform-provider-cockroach-extra"
 
 var userCredMapResource = NewSyncResourceHolder(&UserCredMap{})
 
+type CockroachCloudErrorResponse struct {
+	Code    int      `json:"code"`
+	Message string   `json:"message"`
+	Details []string `json:"details"`
+}
+
+type CockroachCloudClusterNotFoundError struct{}
+
+func (e CockroachCloudClusterNotFoundError) Error() string {
+	return "cluster not found"
+}
+
+type CockroachCloudClusterNotReadyError struct {
+}
+
+func (e CockroachCloudClusterNotReadyError) Error() string {
+	return "cluster not ready"
+}
+
+func processCloudResponse(resp *http.Response, outputStruct *interface{}) (err error) {
+	if resp.StatusCode != 200 {
+		// read body content as string
+		errorBody := CockroachCloudErrorResponse{}
+		err = json.NewDecoder(resp.Body).Decode(&errorBody)
+		if err != nil {
+			return err
+		}
+		if errorBody.Code == 9 {
+			return CockroachCloudClusterNotReadyError{}
+		}
+		if errorBody.Code == 5 {
+			return CockroachCloudClusterNotFoundError{}
+		}
+
+		return fmt.Errorf("received non-200 status code: %d, body: %v", resp.StatusCode, errorBody)
+	}
+
+	if outputStruct == nil {
+		return nil
+	}
+
+	// read json data
+	err = json.NewDecoder(resp.Body).Decode(outputStruct)
+	if err != nil {
+		return err
+	}
+
+	return nil
+
+}
+
 // NewCcloudClient returns a new CcloudClient.
 func NewCcloudClient(ctx context.Context, apiKey string) *CcloudClient {
 	tflog.Debug(ctx, "Creating ccloud client with api key")
@@ -83,15 +134,10 @@ func (c *CcloudClient) createTempUser(ctx context.Context, clusterId string) (us
 		return nil, err
 	}
 
-	if resp.StatusCode != 200 {
-		// read body content as string
-		buf := new(bytes.Buffer)
-		_, err := buf.ReadFrom(resp.Body)
-		if err != nil {
-			return nil, err
-		}
-		bodyStr := buf.String()
-		return nil, fmt.Errorf("received non-200 status code: %d, body: %s", resp.StatusCode, bodyStr)
+	err = processCloudResponse(resp, nil)
+
+	if err != nil {
+		return nil, err
 	}
 
 	err = c.updateUserExpiration(ctx, clusterId, &request)
@@ -151,16 +197,6 @@ func (c *CcloudClient) deleteTempUser(ctx context.Context, clusterId string, use
 		return err
 	}
 
-	if resp.StatusCode != 200 && resp.StatusCode != 500 && resp.StatusCode != 404 {
-		body := new(bytes.Buffer)
-		_, err = body.ReadFrom(resp.Body)
-		if err != nil {
-			return err
-		}
-		tflog.Debug(ctx, fmt.Sprintf("Received non-200 status code: %d, body: %s", resp.StatusCode, body.String()))
-		return fmt.Errorf("received non-200 status code: %d", resp.StatusCode)
-	}
-
 	defer func(Body io.ReadCloser) {
 		err := Body.Close()
 		if err != nil {
@@ -168,7 +204,7 @@ func (c *CcloudClient) deleteTempUser(ctx context.Context, clusterId string, use
 		}
 	}(resp.Body)
 
-	return nil
+	return processCloudResponse(resp, nil)
 }
 
 type ConnectionStringResponseParams struct {
