@@ -133,7 +133,7 @@ func (r *RoleGrantResource) Read(ctx context.Context, req resource.ReadRequest, 
 		return &result, nil
 	})
 
-	if err != nil {
+	if err != nil && !errors.Is(err, &ccloud.CockroachCloudClusterNotReadyError{}) && !errors.Is(err, &ccloud.CockroachCloudClusterNotFoundError{}) {
 		resp.Diagnostics.AddError("Failed to read role", err.Error())
 		return
 	}

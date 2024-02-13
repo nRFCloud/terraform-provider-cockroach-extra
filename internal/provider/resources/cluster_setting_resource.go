@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -138,12 +139,16 @@ func (r *ClusterSettingResource) Read(ctx context.Context, req resource.ReadRequ
 	}
 
 	settingRow, err := r.getClusterSetting(ctx, data.ClusterId.ValueString(), data.SettingName.ValueString())
-	if err != nil {
+	if err != nil && !errors.Is(err, &ccloud.CockroachCloudClusterNotReadyError{}) && !errors.Is(err, &ccloud.CockroachCloudClusterNotFoundError{}) {
 		resp.Diagnostics.AddError("Unable to get cluster setting", err.Error())
 		return
 	}
 
-	data.SettingValue = types.StringValue(*settingRow)
+	if settingRow == nil {
+		data.SettingValue = types.StringNull()
+	} else {
+		data.SettingValue = types.StringValue(*settingRow)
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
