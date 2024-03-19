@@ -43,6 +43,10 @@ func (e CockroachCloudClusterNotReadyError) Error() string {
 	return "cluster not ready"
 }
 
+type CockroachCloudSqlUserNotFoundError struct{}
+
+func (e CockroachCloudSqlUserNotFoundError) Error() string { return "sql user not found" }
+
 func processCloudResponse(resp *http.Response, outputStruct *interface{}) (err error) {
 	if resp.StatusCode != 200 {
 		// read body content as string
@@ -56,6 +60,9 @@ func processCloudResponse(resp *http.Response, outputStruct *interface{}) (err e
 		}
 		if errorBody.Code == 5 {
 			return CockroachCloudClusterNotFoundError{}
+		}
+		if errorBody.Code == 13 {
+			return CockroachCloudSqlUserNotFoundError{}
 		}
 
 		return fmt.Errorf("received non-200 status code: %d, body: %v", resp.StatusCode, errorBody)
@@ -204,7 +211,14 @@ func (c *CcloudClient) deleteTempUser(ctx context.Context, clusterId string, use
 		}
 	}(resp.Body)
 
-	return processCloudResponse(resp, nil)
+	err = processCloudResponse(resp, nil)
+
+	// check if user was not found
+	if _, ok := err.(CockroachCloudSqlUserNotFoundError); ok {
+		return nil
+	}
+
+	return err
 }
 
 type ConnectionStringResponseParams struct {
@@ -233,9 +247,13 @@ func (c *CcloudClient) getConnectionOptions(ctx context.Context, clusterId strin
 		return nil, err
 	}
 
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("received non-200 status code: %d", resp.StatusCode)
+	if processCloudResponse(resp, nil) != nil {
+		return nil, err
 	}
+
+	//if resp.StatusCode != 200 {
+	//	return nil, fmt.Errorf("received non-200 status code: %d", resp.StatusCode)
+	//}
 
 	defer func(Body io.ReadCloser) {
 		err := Body.Close()
