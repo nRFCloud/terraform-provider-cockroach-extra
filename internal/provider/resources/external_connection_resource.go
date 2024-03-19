@@ -40,6 +40,14 @@ func buildExternalConnectionId(clusterId string, connectionName string) string {
 	return clusterId + "|" + connectionName
 }
 
+func parseExternalConnectionId(id string) (clusterId string, connectionName string, err error) {
+	parts := strings.Split(id, "|")
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("invalid external connection ID")
+	}
+	return parts[0], parts[1], nil
+}
+
 func (r *ExternalConnectionResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "External connection",
@@ -205,14 +213,11 @@ func (r *ExternalConnectionResource) Update(ctx context.Context, req resource.Up
 }
 
 func (r *ExternalConnectionResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	parts := strings.Split(req.ID, "|")
-	if len(parts) != 2 {
-		resp.Diagnostics.AddError("Invalid import ID", "Invalid import ID")
+	clusterId, connectionName, err := parseExternalConnectionId(req.ID)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid external connection ID", err.Error())
 		return
 	}
-
-	clusterId := parts[0]
-	connectionName := parts[1]
 
 	exConnStatement, err := ccloud.SqlConWithTempUser(ctx, r.client, clusterId, "defaultdb", func(db *pgx.ConnPool) (*string, error) {
 		var connectionStatement string
