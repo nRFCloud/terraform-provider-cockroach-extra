@@ -39,9 +39,9 @@ type ChangefeedResource struct {
 }
 
 type ChangefeedResourceModel struct {
-	ClusterId types.String `tfsdk:"cluster_id"`
-	Id        types.Int64  `tfsdk:"id"`
-	//JobId               types.Int64  `tfsdk:"job_id"`
+	ClusterId           types.String `tfsdk:"cluster_id"`
+	Id                  types.String `tfsdk:"id"`
+	JobId               types.Int64  `tfsdk:"job_id"`
 	Target              types.List   `tfsdk:"target"`
 	Select              types.String `tfsdk:"select"`
 	SinkUri             types.String `tfsdk:"sink_uri"`
@@ -86,6 +86,10 @@ func (r *ChangefeedResource) Metadata(ctx context.Context, req resource.Metadata
 	resp.TypeName = req.ProviderTypeName + "_changefeed"
 }
 
+func getChangefeedId(clusterId string, jobId int64) string {
+	return fmt.Sprintf("%s|%d", clusterId, jobId)
+}
+
 func (r *ChangefeedResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Cluster setting",
@@ -97,7 +101,15 @@ func (r *ChangefeedResource) Schema(ctx context.Context, req resource.SchemaRequ
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"id": schema.Int64Attribute{
+			"id": schema.StringAttribute{
+				Computed: true,
+				Optional: false,
+				Required: false,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"job_id": schema.Int64Attribute{
 				Computed:            true,
 				MarkdownDescription: "Changefeed job ID",
 				Optional:            false,
@@ -412,7 +424,8 @@ func (r *ChangefeedResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
-	data.Id = types.Int64Value(*jobId)
+	data.JobId = types.Int64Value(*jobId)
+	data.Id = types.StringValue(getChangefeedId(data.ClusterId.ValueString(), *jobId))
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -430,7 +443,7 @@ func (r *ChangefeedResource) Read(ctx context.Context, req resource.ReadRequest,
 		return
 	}
 
-	tflog.Info(ctx, fmt.Sprintf("Reading changefeed with job ID: %d", data.Id.ValueInt64()))
+	tflog.Info(ctx, fmt.Sprintf("Reading changefeed with job ID: %d", data.JobId.ValueInt64()))
 
 	changefeedInfo, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*struct {
 		uri            string
@@ -442,7 +455,7 @@ func (r *ChangefeedResource) Read(ctx context.Context, req resource.ReadRequest,
 		var status string
 		var uri string
 		var fullTableNames []string
-		err := db.QueryRow(fmt.Sprintf("SHOW CHANGEFEED JOB %d", data.Id.ValueInt64())).Scan(
+		err := db.QueryRow(fmt.Sprintf("SHOW CHANGEFEED JOB %d", data.JobId.ValueInt64())).Scan(
 			nil, &statement, nil, &status, nil, nil, nil, nil, nil, nil, nil, &uri, &fullTableNames, nil, nil)
 		if err != nil {
 			return nil, err
@@ -715,12 +728,12 @@ func (r *ChangefeedResource) Update(ctx context.Context, req resource.UpdateRequ
 		removeTargetStatement = fmt.Sprintf("DROP %s", strings.Join(removedTargets, ", "))
 	}
 
-	query := fmt.Sprintf("ALTER CHANGEFEED %d %s %s %s %s", data.Id.ValueInt64(), addTargetStatement, removeTargetStatement, setStatement, unsetStatement)
+	query := fmt.Sprintf("ALTER CHANGEFEED %d %s %s %s %s", data.JobId.ValueInt64(), addTargetStatement, removeTargetStatement, setStatement, unsetStatement)
 
 	tflog.Info(ctx, fmt.Sprintf("Updating changefeed with query: %s", query))
 
 	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*interface{}, error) {
-		_, err := db.Exec(fmt.Sprintf("PAUSE JOB %d WITH REASON='Terraform Update'", data.Id.ValueInt64()))
+		_, err := db.Exec(fmt.Sprintf("PAUSE JOB %d WITH REASON='Terraform Update'", data.JobId.ValueInt64()))
 		if err != nil {
 			return nil, err
 		}
@@ -728,7 +741,7 @@ func (r *ChangefeedResource) Update(ctx context.Context, req resource.UpdateRequ
 		err = retry.Do(
 			func() error {
 				var count int
-				err := db.QueryRow(fmt.Sprintf("SELECT count(*) FROM [SHOW CHANGEFEED JOB %d] WHERE status = 'paused'", data.Id.ValueInt64())).Scan(&count)
+				err := db.QueryRow(fmt.Sprintf("SELECT count(*) FROM [SHOW CHANGEFEED JOB %d] WHERE status = 'paused'", data.JobId.ValueInt64())).Scan(&count)
 				if err != nil {
 					return err
 				}
@@ -747,7 +760,7 @@ func (r *ChangefeedResource) Update(ctx context.Context, req resource.UpdateRequ
 		if err != nil {
 			return nil, err
 		}
-		_, err = db.Exec(fmt.Sprintf("RESUME JOB %d", data.Id.ValueInt64()))
+		_, err = db.Exec(fmt.Sprintf("RESUME JOB %d", data.JobId.ValueInt64()))
 		return nil, err
 	})
 
@@ -769,7 +782,7 @@ func (r *ChangefeedResource) Delete(ctx context.Context, req resource.DeleteRequ
 	}
 
 	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*interface{}, error) {
-		_, err := db.Exec(fmt.Sprintf("CANCEL JOB %d", data.Id.ValueInt64()))
+		_, err := db.Exec(fmt.Sprintf("CANCEL JOB %d", data.JobId.ValueInt64()))
 		return nil, err
 	})
 

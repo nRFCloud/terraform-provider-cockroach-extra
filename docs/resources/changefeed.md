@@ -31,7 +31,8 @@ Documentation for the options can be found [here](https://www.cockroachlabs.com/
 
 ### Read-Only
 
-- `id` (Number) Changefeed job ID
+- `id` (String) The ID of this resource.
+- `job_id` (Number) Changefeed job ID
 
 <a id="nestedatt--options"></a>
 ### Nested Schema for `options`
