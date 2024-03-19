@@ -96,6 +96,8 @@ func (p *CockroachExtraProvider) Resources(ctx context.Context) []func() resourc
 		resources.NewSqlUserResource,
 		resources.NewSqlRoleResource,
 		resources.NewMigrationResource,
+		resources.NewExternalConnectionResource,
+		resources.NewChangefeedResource,
 	}
 }
 

@@ -21,10 +21,22 @@ terraform {
   }
 }
 
-resource "cockroach-extra_cluster_setting" "set_issuers" {
-  cluster_id    = "a09677a4-5497-4c7a-af42-b8932dafb3a3"
-  setting_name  = "server.jwt_authentication.issuers"
-  setting_value = "other"
+resource "cockroach-extra_external_connection" "test_kafka" {
+  cluster_id = "7e200f32-5273-47bc-abcd-0dc248586b38"
+  name       = "test_kafka"
+  uri        = "kafka://cluster-1.kafka.us-west-1.amazonaws.com:9092"
+}
+
+resource "cockroach-extra_changefeed" "test_changefeed" {
+  cluster_id = "7e200f32-5273-47bc-abcd-0dc248586b38"
+  sink_uri   = cockroach-extra_external_connection.test_kafka.ref_uri
+  target     = ["defaultdb.public.test"]
+  options = {
+    full_table_name = true
+    on_error        = "fail"
+    metrics_label   = "test"
+    format          = "json"
+  }
 }
 
 provider "cockroach-extra" {

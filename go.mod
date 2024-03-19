@@ -3,6 +3,7 @@ module github.com/nrfcloud/terraform-provider-cockroach-extra
 go 1.19
 
 require (
+	github.com/avast/retry-go v3.0.0+incompatible
 	github.com/golang-migrate/migrate v3.5.4+incompatible
 	github.com/google/uuid v1.3.1
 	github.com/hashicorp/terraform-plugin-docs v0.16.0
@@ -10,6 +11,7 @@ require (
 	github.com/hashicorp/terraform-plugin-framework-validators v0.12.0
 	github.com/hashicorp/terraform-plugin-log v0.9.0
 	github.com/jackc/pgx v3.6.2+incompatible
+	github.com/lib/pq v1.10.9
 )
 
 require (
@@ -65,7 +67,6 @@ require (
 	github.com/imdario/mergo v0.3.15 // indirect
 	github.com/jackc/fake v0.0.0-20150926172116-812a484cc733 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
-	github.com/lib/pq v1.10.9 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.16 // indirect
 	github.com/mitchellh/cli v1.1.5 // indirect
