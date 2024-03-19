@@ -189,7 +189,7 @@ func (c *CcloudClient) getOrCreateTempUser(ctx context.Context, userCredMap *Use
 	return credMap[clusterId], nil
 }
 
-func (c *CcloudClient) deleteTempUser(ctx context.Context, clusterId string, username string) (err error) {
+func (c *CcloudClient) deleteTempUser(_ context.Context, clusterId string, username string) (err error) {
 	path := fmt.Sprintf("/api/v1/clusters/%s/sql-users/%s", clusterId, username)
 
 	req, err := http.NewRequest("DELETE", c.Host+path, nil)

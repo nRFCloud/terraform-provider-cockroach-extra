@@ -22,13 +22,13 @@ terraform {
 }
 
 resource "cockroach-extra_external_connection" "test_kafka" {
-  cluster_id = "7e200f32-5273-47bc-abcd-0dc248586b38"
+  cluster_id = "7e200f32-5273-47bc-abcd-0dc248586b32"
   name       = "test_kafka"
-  uri        = "kafka://cluster-1.kafka.us-west-1.amazonaws.com:9092"
+  uri        = "kafka://cluster-0.kafka.svc:9092"
 }
 
 resource "cockroach-extra_changefeed" "test_changefeed" {
-  cluster_id = "7e200f32-5273-47bc-abcd-0dc248586b38"
+  cluster_id = "7e200f32-5273-47bc-abcd-0dc248586b32"
   sink_uri   = cockroach-extra_external_connection.test_kafka.ref_uri
   target     = ["defaultdb.public.test"]
   options = {
