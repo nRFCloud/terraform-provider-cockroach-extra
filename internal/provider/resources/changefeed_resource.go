@@ -406,11 +406,11 @@ func (r *ChangefeedResource) Create(ctx context.Context, req resource.CreateRequ
 		data.Target.ElementsAs(ctx, &targetStringList, false)
 		targetString := strings.Join(targetStringList, ", ")
 
-		query = fmt.Sprintf("CREATE CHANGEFEED FOR %s INTO %s %s", targetString, pgx.Identifier{data.SinkUri.ValueString()}.Sanitize(), optionsString)
+		query = fmt.Sprintf("CREATE CHANGEFEED FOR %s INTO '%s' %s", targetString, data.SinkUri.ValueString(), optionsString)
 	}
 
 	if !data.Select.IsNull() {
-		query = fmt.Sprintf("CREATE CHANGEFEED INTO %s %s AS %s", pgx.Identifier{data.SinkUri.ValueString()}.Sanitize(), optionsString, data.Select.ValueString())
+		query = fmt.Sprintf("CREATE CHANGEFEED INTO '%s' %s AS %s", data.SinkUri.ValueString(), optionsString, data.Select.ValueString())
 
 	}
 
