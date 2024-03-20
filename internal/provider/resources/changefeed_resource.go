@@ -374,7 +374,7 @@ func (r *ChangefeedResource) Create(ctx context.Context, req resource.CreateRequ
 	}
 
 	// Iterate through the keys of the options struct and build a string of options ex: SET option1 = value1, option2 = value2
-	options := ""
+	options := []string{}
 	optionsObjVal := reflect.ValueOf(data.Options)
 	for i := 0; i < optionsObjVal.NumField(); i++ {
 		value := optionsObjVal.Field(i).Interface()
@@ -385,16 +385,19 @@ func (r *ChangefeedResource) Create(ctx context.Context, req resource.CreateRequ
 		switch v := value.(type) {
 		case types.Bool:
 			if !v.IsNull() {
-				options += fmt.Sprintf("%s, ", tag)
+				options = append(options, tag)
 			}
 		case types.String:
 			if !v.IsNull() {
 				// If the value is a string, sanitize it and add it to the options string
-				options += fmt.Sprintf("%s=%s, ", tag, pq.QuoteLiteral(v.ValueString()))
+				options = append(options, fmt.Sprintf("%s=%s", tag, pq.QuoteLiteral(v.ValueString())))
 			}
 		}
 	}
-	options = strings.TrimSuffix(options, ", ")
+	optionsString := ""
+	if len(options) > 0 {
+		optionsString = fmt.Sprintf("WITH %s", strings.Join(options, ", "))
+	}
 
 	query := ""
 
@@ -403,11 +406,11 @@ func (r *ChangefeedResource) Create(ctx context.Context, req resource.CreateRequ
 		data.Target.ElementsAs(ctx, &targetStringList, false)
 		targetString := strings.Join(targetStringList, ", ")
 
-		query = fmt.Sprintf("CREATE CHANGEFEED FOR %s INTO '%s' WITH %s", targetString, data.SinkUri.ValueString(), options)
+		query = fmt.Sprintf("CREATE CHANGEFEED FOR %s INTO %s %s", targetString, pgx.Identifier{data.SinkUri.ValueString()}.Sanitize(), optionsString)
 	}
 
 	if !data.Select.IsNull() {
-		query = fmt.Sprintf("CREATE CHANGEFEED INTO '%s' WITH %s AS %s", data.SinkUri.ValueString(), options, data.Select.ValueString())
+		query = fmt.Sprintf("CREATE CHANGEFEED INTO %s %s AS %s", pgx.Identifier{data.SinkUri.ValueString()}.Sanitize(), optionsString, data.Select.ValueString())
 
 	}
 
