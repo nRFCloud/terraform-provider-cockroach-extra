@@ -25,6 +25,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 )
 
 var _ resource.Resource = &ChangefeedResource{}
@@ -858,6 +859,8 @@ func waitForJobStatus(db *pgx.ConnPool, jobId int64, status string) error {
 			}
 			return nil
 		},
+		retry.Attempts(20),
+		retry.Delay(time.Second*2),
 	)
 }
 
