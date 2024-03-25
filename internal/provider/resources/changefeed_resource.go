@@ -12,6 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -46,6 +47,7 @@ type ChangefeedResourceModel struct {
 	Select              types.String `tfsdk:"select"`
 	SinkUri             types.String `tfsdk:"sink_uri"`
 	InitialScanOnUpdate types.Bool   `tfsdk:"initial_scan_on_update"`
+	Status              types.String `tfsdk:"status"`
 	Options             struct {
 		AvroSchemaPrefix             types.String `tfsdk:"avro_schema_prefix"`
 		Compression                  types.String `tfsdk:"compression"`
@@ -66,7 +68,7 @@ type ChangefeedResourceModel struct {
 		LaggingRangesPollingInterval types.String `tfsdk:"lagging_ranges_polling_interval"`
 		MetricsLabel                 types.String `tfsdk:"metrics_label"`
 		MinCheckpointFrequency       types.String `tfsdk:"min_checkpoint_frequency"`
-		MvccTimestamp                types.String `tfsdk:"mvcc_timestamp"`
+		MvccTimestamp                types.Bool   `tfsdk:"mvcc_timestamp"`
 		OnError                      types.String `tfsdk:"on_error"`
 		ProtectDataFromGcOnPause     types.Bool   `tfsdk:"protect_data_from_gc_on_pause"`
 		Resolved                     types.String `tfsdk:"resolved"`
@@ -125,6 +127,13 @@ func (r *ChangefeedResource) Schema(ctx context.Context, req resource.SchemaRequ
 				Optional:            true,
 				Validators: []validator.List{
 					listvalidator.ExactlyOneOf(path.MatchRoot("select")),
+					listvalidator.UniqueValues(),
+					listvalidator.ValueStringsAre(
+						stringvalidator.RegexMatches(
+							regexp.MustCompile(`^[a-zA-Z0-9_]+?\.[a-zA-Z0-9_]+?\.[a-zA-Z0-9_]+?$`),
+							"Table names must be fully qualified",
+						),
+					),
 				},
 			},
 			"select": schema.StringAttribute{
@@ -137,14 +146,49 @@ SQL query that the changefeed will use to filter the watched tables.
 				Validators: []validator.String{
 					stringvalidator.ExactlyOneOf(path.MatchRoot("target")),
 				},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"sink_uri": schema.StringAttribute{
 				MarkdownDescription: "URI of the sink where the changefeed will send the changes",
 				Required:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplaceIf(func(ctx context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
+						var data ChangefeedResourceModel
+						resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
+						resp.RequiresReplace = !data.Select.IsNull()
+					}, "", ""),
+				},
+			},
+			"status": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Status of the changefeed job",
+				Optional:            false,
+				Required:            false,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplaceIf(func(ctx context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
+						resp.RequiresReplace = !(req.StateValue.ValueString() == "paused" || req.StateValue.ValueString() == "running")
+					},
+						"", ""),
+				},
+				Validators: []validator.String{
+					stringvalidator.OneOf("running", "paused", "canceling", "canceled", "failed", "succeeded"),
+				},
 			},
 			"options": schema.SingleNestedAttribute{
 				Optional: true,
 				Required: false,
+				PlanModifiers: []planmodifier.Object{
+					objectplanmodifier.RequiresReplaceIf(func(ctx context.Context, req planmodifier.ObjectRequest, resp *objectplanmodifier.RequiresReplaceIfFuncResponse) {
+						var data ChangefeedResourceModel
+						resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
+						resp.RequiresReplace = !data.Select.IsNull()
+					},
+						"Changefeeds with queries cannot be updated",
+						"Changing"),
+				},
 				MarkdownDescription: `
 Options for the changefeed.
 Documentation for the options can be found [here](https://www.cockroachlabs.com/docs/stable/create-changefeed#options)
@@ -257,7 +301,7 @@ Documentation for the options can be found [here](https://www.cockroachlabs.com/
 						Required:            false,
 						Optional:            true,
 					},
-					"mvcc_timestamp": schema.StringAttribute{
+					"mvcc_timestamp": schema.BoolAttribute{
 						MarkdownDescription: "MVCC timestamp",
 						Required:            false,
 						Optional:            true,
@@ -419,6 +463,13 @@ func (r *ChangefeedResource) Create(ctx context.Context, req resource.CreateRequ
 	jobId, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*int64, error) {
 		var jobId int64
 		err := db.QueryRow(query).Scan(&jobId)
+
+		if err != nil {
+			return nil, err
+		}
+
+		// wait for job to be running
+		err = waitForJobStatus(db, jobId, "running")
 		return &jobId, err
 	})
 
@@ -429,6 +480,7 @@ func (r *ChangefeedResource) Create(ctx context.Context, req resource.CreateRequ
 
 	data.JobId = types.Int64Value(*jobId)
 	data.Id = types.StringValue(getChangefeedId(data.ClusterId.ValueString(), *jobId))
+	data.Status = types.StringValue("running")
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -453,26 +505,31 @@ func (r *ChangefeedResource) Read(ctx context.Context, req resource.ReadRequest,
 		statement      string
 		status         string
 		fullTableNames []string
+		highWaterMark  float64
 	}, error) {
 		var statement string
 		var status string
 		var uri string
 		var fullTableNames []string
-		err := db.QueryRow(fmt.Sprintf("SHOW CHANGEFEED JOB %d", data.JobId.ValueInt64())).Scan(
-			nil, &statement, nil, &status, nil, nil, nil, nil, nil, nil, nil, &uri, &fullTableNames, nil, nil)
+		var highWaterMark float64
+		err := db.QueryRow(fmt.Sprintf("SELECT description, status, sink_uri, full_table_names, high_water_timestamp from [SHOW CHANGEFEED JOB %d]", data.JobId.ValueInt64())).
+			Scan(&statement, &status, &uri, &fullTableNames, &highWaterMark)
 		if err != nil {
 			return nil, err
 		}
+
 		result := struct {
 			uri            string
 			statement      string
 			status         string
 			fullTableNames []string
+			highWaterMark  float64
 		}{
 			uri:            uri,
 			statement:      statement,
 			status:         status,
 			fullTableNames: fullTableNames,
+			highWaterMark:  highWaterMark,
 		}
 		return &result, nil
 	})
@@ -482,22 +539,27 @@ func (r *ChangefeedResource) Read(ctx context.Context, req resource.ReadRequest,
 		return
 	}
 
+	if changefeedInfo.status == "failed" || changefeedInfo.status == "canceled" || changefeedInfo.status == "canceling" {
+		resp.Diagnostics.AddError("Changefeed job in unexpected state", fmt.Sprintf("Changefeed job is in state: %s", changefeedInfo.status))
+		return
+	}
+
 	tflog.Info(ctx, fmt.Sprintf("Changefeed statement: %s", changefeedInfo.statement))
 
 	// Parse the statement to get the target and select
 	// ex: CREATE CHANGEFEED FOR table1, table2 INTO 'sink' WITH option1 = value1, option2
 	// ex: CREATE CHANGEFEED INTO 'sink' WITH option1 = value1, option2 = value2 AS SELECT * FROM table1
-	var optionsRaw string
+	optionsRaw := ""
 
 	// Match prefix case-insensitive to detect the type of changefeed
 	if strings.HasPrefix(changefeedInfo.statement, "CREATE CHANGEFEED FOR") {
-		re := regexp.MustCompile(`(?i)create changefeed for([\s\S]+?)into([\s\S])+?with([\s\S]+?)$`)
+		re := regexp.MustCompile(`(?i)create changefeed for[\s\S]+?into[\s\S]+?(?:with([\s\S]+?))?$`)
 		match := re.FindStringSubmatch(changefeedInfo.statement)
-		if len(match) != 4 {
+		if len(match) != 2 {
 			resp.Diagnostics.AddError("Unable to parse changefeed statement", "Unable to parse changefeed statement")
 			return
 		}
-		optionsRaw = strings.TrimSpace(match[3])
+		optionsRaw = strings.TrimSpace(match[1])
 		targets := make([]attr.Value, len(changefeedInfo.fullTableNames))
 		for i, target := range changefeedInfo.fullTableNames {
 			targets[i] = types.StringValue(target)
@@ -507,14 +569,14 @@ func (r *ChangefeedResource) Read(ctx context.Context, req resource.ReadRequest,
 
 	if strings.HasPrefix(changefeedInfo.statement, "CREATE CHANGEFEED INTO") {
 		// Parse the statement with regex to extract the sink URI and options
-		re := regexp.MustCompile(`(?i)create changefeed into([\s\S]+?)with([\s\S])+?as([\s\S]+?)$`)
+		re := regexp.MustCompile(`(?i)create changefeed into[\s\S]+?(?:with([\s\S]+?))?as([\s\S]+?)$`)
 		match := re.FindStringSubmatch(changefeedInfo.statement)
-		if len(match) != 4 {
+		if len(match) != 3 {
 			resp.Diagnostics.AddError("Unable to parse changefeed statement", "Unable to parse changefeed statement")
 			return
 		}
-		optionsRaw = strings.TrimSpace(match[2])
-		data.Select = types.StringValue(strings.TrimSpace(match[3]))
+		optionsRaw = strings.TrimSpace(match[1])
+		//data.Select = types.StringValue(strings.TrimSpace(match[2]))
 	}
 
 	data.SinkUri = types.StringValue(changefeedInfo.uri)
@@ -573,7 +635,7 @@ func (r *ChangefeedResource) Read(ctx context.Context, req resource.ReadRequest,
 		case "min_checkpoint_frequency":
 			data.Options.MinCheckpointFrequency = types.StringValue(value)
 		case "mvcc_timestamp":
-			data.Options.MvccTimestamp = types.StringValue(value)
+			data.Options.MvccTimestamp = types.BoolValue(true)
 		case "on_error":
 			data.Options.OnError = types.StringValue(value)
 		case "protect_data_from_gc_on_pause":
@@ -601,6 +663,7 @@ func (r *ChangefeedResource) Read(ctx context.Context, req resource.ReadRequest,
 		}
 	}
 
+	data.Status = types.StringValue(changefeedInfo.status)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -643,6 +706,13 @@ func (r *ChangefeedResource) Update(ctx context.Context, req resource.UpdateRequ
 	data.Id = stateData.Id
 
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	stateStatus := stateData.Status.ValueString()
+
+	if stateStatus == "canceled" || stateStatus == "failed" || stateStatus == "succeeded" || stateStatus == "canceling" {
+		resp.Diagnostics.AddError("Unable to update changefeed", "Changefeed is not running")
 		return
 	}
 
@@ -697,6 +767,10 @@ func (r *ChangefeedResource) Update(ctx context.Context, req resource.UpdateRequ
 		}
 	}
 
+	if !data.SinkUri.Equal(stateData.SinkUri) {
+		setList = append(setList, fmt.Sprintf("sink='%s'", data.SinkUri.ValueString()))
+	}
+
 	var setStatement string
 	var unsetStatement string
 
@@ -741,20 +815,7 @@ func (r *ChangefeedResource) Update(ctx context.Context, req resource.UpdateRequ
 			return nil, err
 		}
 		// Wait until the job is paused
-		err = retry.Do(
-			func() error {
-				var count int
-				err := db.QueryRow(fmt.Sprintf("SELECT count(*) FROM [SHOW CHANGEFEED JOB %d] WHERE status = 'paused'", data.JobId.ValueInt64())).Scan(&count)
-				if err != nil {
-					return err
-				}
-				if count == 0 {
-					return fmt.Errorf("job not paused")
-				}
-				return nil
-			},
-		)
-
+		err = waitForJobStatus(db, data.JobId.ValueInt64(), "paused")
 		if err != nil {
 			return nil, err
 		}
@@ -764,6 +825,13 @@ func (r *ChangefeedResource) Update(ctx context.Context, req resource.UpdateRequ
 			return nil, err
 		}
 		_, err = db.Exec(fmt.Sprintf("RESUME JOB %d", data.JobId.ValueInt64()))
+		if err != nil {
+			return nil, err
+
+		}
+		// Wait until the job is running
+		err = waitForJobStatus(db, data.JobId.ValueInt64(), "running")
+
 		return nil, err
 	})
 
@@ -772,7 +840,25 @@ func (r *ChangefeedResource) Update(ctx context.Context, req resource.UpdateRequ
 		return
 	}
 
+	data.Status = types.StringValue("running")
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+func waitForJobStatus(db *pgx.ConnPool, jobId int64, status string) error {
+	return retry.Do(
+		func() error {
+			var jobStatus string
+			err := db.QueryRow(fmt.Sprintf("SELECT status FROM [SHOW CHANGEFEED JOB %d]", jobId)).Scan(&jobStatus)
+			if err != nil {
+				return err
+			}
+			if jobStatus != status {
+				return fmt.Errorf("job status never reached %s current status: %s", status, jobStatus)
+			}
+			return nil
+		},
+	)
 }
 
 func (r *ChangefeedResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -784,14 +870,27 @@ func (r *ChangefeedResource) Delete(ctx context.Context, req resource.DeleteRequ
 		return
 	}
 
-	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*interface{}, error) {
-		_, err := db.Exec(fmt.Sprintf("CANCEL JOB %d", data.JobId.ValueInt64()))
-		return nil, err
-	})
+	status := data.Status.ValueString()
 
-	if err != nil {
-		resp.Diagnostics.AddError("Unable to cancel job", err.Error())
-		return
+	if status == "running" || status == "paused" {
+
+		_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*interface{}, error) {
+			_, err := db.Exec(fmt.Sprintf("CANCEL JOB %d", data.JobId.ValueInt64()))
+
+			if err != nil {
+				return nil, err
+			}
+
+			err = waitForJobStatus(db, data.JobId.ValueInt64(), "canceled")
+
+			return nil, err
+		})
+
+		if err != nil {
+			resp.Diagnostics.AddError("Unable to cancel job", err.Error())
+			return
+		}
+
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)

@@ -33,6 +33,7 @@ Documentation for the options can be found [here](https://www.cockroachlabs.com/
 
 - `id` (String) The ID of this resource.
 - `job_id` (Number) Changefeed job ID
+- `status` (String) Status of the changefeed job
 
 <a id="nestedatt--options"></a>
 ### Nested Schema for `options`
@@ -58,7 +59,7 @@ Optional:
 - `lagging_ranges_threshold` (String) Lagging ranges threshold
 - `metrics_label` (String) Metrics label
 - `min_checkpoint_frequency` (String) Min checkpoint frequency
-- `mvcc_timestamp` (String) MVCC timestamp
+- `mvcc_timestamp` (Boolean) MVCC timestamp
 - `on_error` (String) On error
 - `protect_data_from_gc_on_pause` (Boolean) Protect data from GC on pause
 - `resolved` (String) Resolved
