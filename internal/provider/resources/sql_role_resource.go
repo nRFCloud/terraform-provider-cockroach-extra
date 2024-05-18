@@ -76,7 +76,7 @@ func (r *SqlRoleResource) Configure(ctx context.Context, req resource.ConfigureR
 }
 
 func getSqlRoleId(clusterId string, username string) string {
-	return fmt.Sprintf("%s|%s", clusterId, username)
+	return fmt.Sprintf("role|%s|%s", clusterId, username)
 }
 
 func (r *SqlRoleResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {

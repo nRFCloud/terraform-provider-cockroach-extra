@@ -37,15 +37,15 @@ func (r *ExternalConnectionResource) Metadata(ctx context.Context, req resource.
 }
 
 func buildExternalConnectionId(clusterId string, connectionName string) string {
-	return clusterId + "|" + connectionName
+	return "external_connection|" + clusterId + "|" + connectionName
 }
 
 func parseExternalConnectionId(id string) (clusterId string, connectionName string, err error) {
 	parts := strings.Split(id, "|")
-	if len(parts) != 2 {
+	if len(parts) != 3 {
 		return "", "", fmt.Errorf("invalid external connection ID")
 	}
-	return parts[0], parts[1], nil
+	return parts[1], parts[2], nil
 }
 
 func (r *ExternalConnectionResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {

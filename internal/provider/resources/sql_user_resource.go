@@ -82,7 +82,7 @@ func (r *SqlUserResource) Configure(ctx context.Context, req resource.ConfigureR
 }
 
 func getSqlUserId(clusterId string, username string) string {
-	return fmt.Sprintf("%s|%s", clusterId, username)
+	return fmt.Sprintf("user|%s|%s", clusterId, username)
 }
 
 func (r *SqlUserResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {

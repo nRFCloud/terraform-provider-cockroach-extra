@@ -25,6 +25,8 @@ Cluster setting
 - `initial_scan_on_update` (Boolean) Initial scan on update
 - `options` (Attributes) Options for the changefeed.
 Documentation for the options can be found [here](https://www.cockroachlabs.com/docs/stable/create-changefeed#options) (see [below for nested schema](#nestedatt--options))
+- `persistent_cursor` (String) Id of a persistent cursor resource.
+If set, the changefeed will use this cursor to resume from.
 - `select` (String) SQL query that the changefeed will use to filter the watched tables.
 **Note:** Using this option will prevent updating any properties of the changefeed.,
 - `target` (List of String) List of tables that the changefeed will watch
