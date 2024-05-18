@@ -98,6 +98,7 @@ func (p *CockroachExtraProvider) Resources(ctx context.Context) []func() resourc
 		resources.NewMigrationResource,
 		resources.NewExternalConnectionResource,
 		resources.NewChangefeedResource,
+		resources.NewPersistentCursorResource,
 	}
 }
 

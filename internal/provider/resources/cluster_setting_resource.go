@@ -157,7 +157,6 @@ func (r *ClusterSettingResource) Update(ctx context.Context, req resource.Update
 	var data ClusterSettingResourceModel
 
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
-	data.Id = types.StringValue(fmt.Sprintf("%s|%s", data.ClusterId.ValueString(), data.SettingName.ValueString()))
 
 	if resp.Diagnostics.HasError() {
 		return

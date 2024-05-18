@@ -85,7 +85,7 @@ func (r *RoleGrantResource) Configure(ctx context.Context, req resource.Configur
 }
 
 func getRoleGrantId(clusterId string, username string, role string) string {
-	return clusterId + "|" + username + "|" + role
+	return "role_grant|" + clusterId + "|" + username + "|" + role
 }
 
 func (r *RoleGrantResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {

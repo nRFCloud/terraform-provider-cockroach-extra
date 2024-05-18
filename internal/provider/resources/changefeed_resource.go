@@ -49,6 +49,7 @@ type ChangefeedResourceModel struct {
 	SinkUri             types.String `tfsdk:"sink_uri"`
 	InitialScanOnUpdate types.Bool   `tfsdk:"initial_scan_on_update"`
 	Status              types.String `tfsdk:"status"`
+	PersistentCursor    types.String `tfsdk:"persistent_cursor"`
 	Options             struct {
 		AvroSchemaPrefix             types.String `tfsdk:"avro_schema_prefix"`
 		Compression                  types.String `tfsdk:"compression"`
@@ -112,6 +113,18 @@ func (r *ChangefeedResource) Schema(ctx context.Context, req resource.SchemaRequ
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"persistent_cursor": schema.StringAttribute{
+				Optional: true,
+				Required: false,
+				Validators: []validator.String{
+					stringvalidator.ConflictsWith(path.MatchRoot("options").AtName("cursor")),
+				},
+				MarkdownDescription: `
+Id of a persistent cursor resource.
+If set, the changefeed will use this cursor to resume from.
+`,
+			},
+
 			"job_id": schema.Int64Attribute{
 				Computed:            true,
 				MarkdownDescription: "Changefeed job ID",
@@ -217,6 +230,7 @@ Documentation for the options can be found [here](https://www.cockroachlabs.com/
 						MarkdownDescription: "Cursor",
 						Required:            false,
 						Optional:            true,
+						Computed:            true,
 					},
 					"diff": schema.BoolAttribute{
 						MarkdownDescription: "Diff",
@@ -418,6 +432,22 @@ func (r *ChangefeedResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
+	var cursorKey string
+	// Check if the persistent_cursor is set
+	if !data.PersistentCursor.IsNull() {
+		_, cursorKey = ParseCursorId(data.PersistentCursor.ValueString())
+		cursorValue, err := GetCursor(ctx, r.client, data.ClusterId.ValueString(), cursorKey)
+
+		if err != nil {
+			resp.Diagnostics.AddError("Unable to get persistent cursor", err.Error())
+			return
+		}
+
+		if cursorValue.OffsetCursor != nil {
+			data.Options.Cursor = types.StringValue(*cursorValue.OffsetCursor)
+		}
+	}
+
 	// Iterate through the keys of the options struct and build a string of options ex: SET option1 = value1, option2 = value2
 	options := []string{}
 	optionsObjVal := reflect.ValueOf(data.Options)
@@ -482,6 +512,12 @@ func (r *ChangefeedResource) Create(ctx context.Context, req resource.CreateRequ
 	data.JobId = types.Int64Value(*jobId)
 	data.Id = types.StringValue(getChangefeedId(data.ClusterId.ValueString(), *jobId))
 	data.Status = types.StringValue("running")
+
+	err = UpdateCursorJobId(ctx, r.client, data.ClusterId.ValueString(), cursorKey, jobId)
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to update cursor job ID", err.Error())
+		return
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -720,6 +756,23 @@ func (r *ChangefeedResource) Update(ctx context.Context, req resource.UpdateRequ
 	if !stateData.Select.IsNull() {
 		resp.Diagnostics.AddError("Unable to update changefeed", "Cannot update changefeed with select statement")
 		return
+	}
+
+	if !data.PersistentCursor.Equal(stateData.PersistentCursor) {
+		var err error
+		if data.PersistentCursor.IsNull() {
+			_, cursorKey := ParseCursorId(stateData.PersistentCursor.ValueString())
+			err = UpdateCursorJobId(ctx, r.client, data.ClusterId.ValueString(), cursorKey, nil)
+		} else {
+			_, cursorKey := ParseCursorId(data.PersistentCursor.ValueString())
+			err = UpdateCursorJobId(ctx, r.client, data.ClusterId.ValueString(), cursorKey, data.JobId.ValueInt64Pointer())
+		}
+
+		if err != nil {
+			resp.Diagnostics.AddError("Unable to update cursor job ID", err.Error())
+			return
+
+		}
 	}
 
 	// Build the options string
