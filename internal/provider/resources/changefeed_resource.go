@@ -91,7 +91,7 @@ func (r *ChangefeedResource) Metadata(ctx context.Context, req resource.Metadata
 }
 
 func getChangefeedId(clusterId string, jobId int64) string {
-	return fmt.Sprintf("%s|%d", clusterId, jobId)
+	return fmt.Sprintf("changefeed|%s|%d", clusterId, jobId)
 }
 
 func (r *ChangefeedResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
@@ -241,6 +241,9 @@ Documentation for the options can be found [here](https://www.cockroachlabs.com/
 						MarkdownDescription: "End time",
 						Required:            false,
 						Optional:            true,
+						PlanModifiers: []planmodifier.String{
+							stringplanmodifier.RequiresReplace(),
+						},
 					},
 					"envelope": schema.StringAttribute{
 						MarkdownDescription: "Envelope",
@@ -267,6 +270,9 @@ Documentation for the options can be found [here](https://www.cockroachlabs.com/
 						MarkdownDescription: "Full table name",
 						Required:            false,
 						Optional:            true,
+						PlanModifiers: []planmodifier.Bool{
+							boolplanmodifier.RequiresReplace(),
+						},
 					},
 					"gc_protect_expires_after": schema.StringAttribute{
 						MarkdownDescription: "GC protect expires after",
@@ -279,6 +285,9 @@ Documentation for the options can be found [here](https://www.cockroachlabs.com/
 						Optional:            true,
 						Validators: []validator.String{
 							stringvalidator.OneOf("yes", "no", "only"),
+						},
+						PlanModifiers: []planmodifier.String{
+							stringplanmodifier.RequiresReplace(),
 						},
 					},
 					"kafka_sink_config": schema.StringAttribute{
@@ -505,6 +514,11 @@ func (r *ChangefeedResource) Create(ctx context.Context, req resource.CreateRequ
 	})
 
 	if err != nil {
+		// if the error contains "after replica gc threshold", then the cursor is too old
+		if strings.Contains(err.Error(), "after replica GC threshold") {
+			resp.Diagnostics.AddError("Unable to create changefeed job with expired cursor", err.Error())
+			return
+		}
 		resp.Diagnostics.AddError("Unable to create changefeed job", err.Error())
 		return
 	}

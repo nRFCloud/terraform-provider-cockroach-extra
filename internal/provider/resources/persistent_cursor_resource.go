@@ -33,6 +33,7 @@ type PersistentCursorResourceModel struct {
 	Id            types.String `tfsdk:"id"`
 	LastUsedJobId types.Int64  `tfsdk:"last_used_job_id"`
 	HighWaterMark types.String `tfsdk:"value"`
+	Ref           types.String `tfsdk:"ref"`
 }
 
 func (r *PersistentCursorResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -84,6 +85,13 @@ Useful for skipping over whatever caused the error.
 			"value": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "Current timestamp of the cursor",
+			},
+			"ref": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Reference to the cursor",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 		},
 	}
@@ -153,9 +161,43 @@ where key = $1
 }
 
 func UpdateCursorJobId(ctx context.Context, client *ccloud.CcloudClient, clusterId string, key string, jobId *int64) error {
-	_, err := ccloud.SqlConWithTempUser(ctx, client, clusterId, "defaultdb", func(db *pgx.ConnPool) (*interface{}, error) {
-		_, err := db.Exec(fmt.Sprintf("UPDATE %s SET last_used_job_id = $1 WHERE key = $2", persistentCursorTable), jobId, key)
-		return nil, err
+	_, err := ccloud.SqlConWithTempUser(ctx, client, clusterId, "defaultdb", func(db *pgx.ConnPool) (_ *interface{}, err error) {
+		tx, err := db.Begin()
+		if err != nil {
+			return nil, err
+		}
+		var currentJobId *int64
+		var status *string
+		var returnedKey *string
+		defer tx.Rollback()
+		err = tx.QueryRow(fmt.Sprintf("select key, last_used_job_id, (select status from [show changefeed jobs] where job_id = last_used_job_id) from %s where key =$1 for update", persistentCursorTable), key).Scan(
+			&returnedKey, &currentJobId, &status)
+
+		if err != nil {
+			return nil, err
+		}
+
+		if currentJobId != nil && !(*status == "canceled" || *status == "failed" || *status == "succeeded" || *status == "canceling") {
+			return nil, fmt.Errorf("cursor is still in use by job %d", *currentJobId)
+		}
+
+		// check if there are any other cursors that are in use by the same job
+		var otherCursorCount int
+		err = tx.QueryRow(fmt.Sprintf("select count(*) from %s where last_used_job_id = $1 and key != $2", persistentCursorTable), jobId, key).Scan(&otherCursorCount)
+		if err != nil {
+			return nil, err
+		}
+
+		if otherCursorCount > 0 {
+			return nil, fmt.Errorf("Job cannot use multiple cursors")
+		}
+
+		_, err = tx.Exec(fmt.Sprintf("UPDATE %s SET last_used_job_id = $1 WHERE key = $2", persistentCursorTable), jobId, key)
+
+		if err != nil {
+			return nil, err
+		}
+		return nil, tx.Commit()
 	})
 	return err
 }
@@ -211,7 +253,8 @@ func (r *PersistentCursorResource) Create(ctx context.Context, req resource.Crea
 		return
 	}
 
-	data.Id = types.StringValue(fmt.Sprintf("cursor|%s|%s", data.ClusterId.ValueString(), data.Key))
+	data.Id = types.StringValue(fmt.Sprintf("cursor|%s|%s", data.ClusterId.ValueString(), data.Key.ValueString()))
+	data.Ref = data.Id
 	data.HighWaterMark = types.StringNull()
 	data.LastUsedJobId = types.Int64Null()
 
@@ -247,6 +290,8 @@ func (r *PersistentCursorResource) Read(ctx context.Context, req resource.ReadRe
 		data.HighWaterMark = types.StringValue(*cursorValue.OffsetCursor)
 	}
 
+	data.Ref = data.Id
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -268,6 +313,8 @@ func (r *PersistentCursorResource) Update(ctx context.Context, req resource.Upda
 		resp.Diagnostics.AddError("Unable to update persistent cursor", err.Error())
 		return
 	}
+
+	data.Ref = data.Id
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
