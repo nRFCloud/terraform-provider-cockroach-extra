@@ -33,4 +33,5 @@ Useful for skipping over whatever caused the error.
 
 - `id` (String) Persistent cursor ID
 - `last_used_job_id` (Number) ID of the last job that used this cursor
+- `ref` (String) Reference to the cursor
 - `value` (String) Current timestamp of the cursor
