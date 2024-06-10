@@ -13,16 +13,16 @@ resource "cockroach-extra_external_connection" "test_kafka" {
 }
 
 resource "cockroach-extra_persistent_cursor" "test_cursor" {
-    cluster_id = "a32a668e-14bf-11ef-8257-765575d27eeb"
-    key       = "test_cursor2"
+  cluster_id = "a32a668e-14bf-11ef-8257-765575d27eeb"
+  key        = "test_cursor2"
 }
 
 resource "cockroach-extra_changefeed" "test_changefeed" {
-  cluster_id = "a32a668e-14bf-11ef-8257-765575d27eeb"
-  sink_uri   = cockroach-extra_external_connection.test_kafka.ref_uri
+  cluster_id        = "a32a668e-14bf-11ef-8257-765575d27eeb"
+  sink_uri          = cockroach-extra_external_connection.test_kafka.ref_uri
   persistent_cursor = cockroach-extra_persistent_cursor.test_cursor.id
-  select = "SELECT * FROM defaultdb.public.test"
-#   target     = ["defaultdb.public.test"]
+  select            = "SELECT * FROM defaultdb.public.test"
+  #   target     = ["defaultdb.public.test"]
   options = {
     full_table_name = true
     on_error        = "fail"
