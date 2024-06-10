@@ -169,7 +169,12 @@ func UpdateCursorJobId(ctx context.Context, client *ccloud.CcloudClient, cluster
 		var currentJobId *int64
 		var status *string
 		var returnedKey *string
-		defer tx.Rollback()
+		defer func() {
+			r := tx.Rollback()
+			if r != nil {
+				err = r
+			}
+		}()
 		err = tx.QueryRow(fmt.Sprintf("select key, last_used_job_id, (select status from [show changefeed jobs] where job_id = last_used_job_id) from %s where key =$1 for update", persistentCursorTable), key).Scan(
 			&returnedKey, &currentJobId, &status)
 
