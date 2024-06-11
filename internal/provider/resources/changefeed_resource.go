@@ -229,8 +229,11 @@ Documentation for the options can be found [here](https://www.cockroachlabs.com/
 					"cursor": schema.StringAttribute{
 						MarkdownDescription: "Cursor",
 						Required:            false,
-						Optional:            true,
+						Optional:            false,
 						Computed:            true,
+						PlanModifiers: []planmodifier.String{
+							stringplanmodifier.UseStateForUnknown(),
+						},
 					},
 					"diff": schema.BoolAttribute{
 						MarkdownDescription: "Diff",
@@ -630,7 +633,9 @@ func (r *ChangefeedResource) Read(ctx context.Context, req resource.ReadRequest,
 		//data.Select = types.StringValue(strings.TrimSpace(match[2]))
 	}
 
-	data.SinkUri = types.StringValue(changefeedInfo.uri)
+	if !CompareURLs(data.SinkUri.ValueString(), changefeedInfo.uri) {
+		data.SinkUri = types.StringValue(changefeedInfo.uri)
+	}
 
 	// Parse the options
 	options := strings.Split(strings.Trim(strings.Trim(optionsRaw, "("), ")"), ",")
@@ -742,7 +747,6 @@ func stringListDelta(source []string, target []string) (added []string, removed 
 
 func (r *ChangefeedResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	bannedOptionUpdates := []string{
-		"cursor",
 		"end_time",
 		"full_table_name",
 		"initial_scan",
@@ -815,6 +819,11 @@ func (r *ChangefeedResource) Update(ctx context.Context, req resource.UpdateRequ
 				resp.Diagnostics.AddError("Unable to update changefeed", fmt.Sprintf("Cannot update %s option. old: %s new: %s", tag, stateValue.String(), value.String()))
 				return
 			}
+			continue
+		}
+
+		if tag == "cursor" {
+			data.Options.Cursor = stateData.Options.Cursor
 			continue
 		}
 
