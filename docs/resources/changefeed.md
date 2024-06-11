@@ -45,7 +45,6 @@ Optional:
 - `avro_schema_prefix` (String) Avro schema prefix
 - `compression` (String) Compression
 - `confluent_schema_registry` (String) Confluent schema registry address for avro
-- `cursor` (String) Cursor
 - `diff` (Boolean) Diff
 - `end_time` (String) End time
 - `envelope` (String) Envelope
@@ -74,3 +73,7 @@ Optional:
 - `virtual_columns` (String) Virtual columns
 - `webhook_auth_header` (String) Webhook auth header
 - `webhook_sink_config` (String) Webhook sink config
+
+Read-Only:
+
+- `cursor` (String) Cursor
