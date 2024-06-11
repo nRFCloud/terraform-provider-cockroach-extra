@@ -119,26 +119,30 @@ func (r *PersistentCursorResource) ensureCursorTable(ctx context.Context, data *
 }
 
 type CursorValue struct {
-	Cursor       *string
-	OffsetCursor *string
-	Offset       *int64
-	Exists       bool
-	LastJobId    *int64
+	Cursor        *string
+	OffsetCursor  *string
+	Offset        *int64
+	Exists        bool
+	LastJobId     *int64
+	LastJobStatus *string
+	InUse         bool
 }
 
 func GetCursor(ctx context.Context, client *ccloud.CcloudClient, clusterId string, key string) (*CursorValue, error) {
 	return ccloud.SqlConWithTempUser(ctx, client, clusterId, "defaultdb", func(db *pgx.ConnPool) (*CursorValue, error) {
-		var cursor, cursorOffset *string
+		var cursor, cursorOffset, lastJobStatus *string
 		var lastJobId, offset *int64
+		inUse := false
 		err := db.QueryRow(fmt.Sprintf(`
 SELECT high_water_timestamp::string as cursor,
        resume_offset,
 (high_water_timestamp::decimal + (resume_offset::decimal * 1000000))::string as offset_high_water_timestamp,
-last_used_job_id last_used_job_id
+last_used_job_id last_used_job_id,
+jobs.status last_used_job_status
 from %s ct
 left outer join [show changefeed jobs] as jobs on jobs.job_id = ct.last_used_job_id
 where key = $1
-`, persistentCursorTable), key).Scan(&cursor, &offset, &cursorOffset, &lastJobId)
+`, persistentCursorTable), key).Scan(&cursor, &offset, &cursorOffset, &lastJobId, &lastJobStatus)
 
 		if errors.Is(err, pgx.ErrNoRows) {
 			return &CursorValue{
@@ -150,12 +154,18 @@ where key = $1
 			return nil, err
 		}
 
+		if lastJobId != nil && lastJobStatus != nil && !(*lastJobStatus == "canceled" || *lastJobStatus == "failed" || *lastJobStatus == "succeeded" || *lastJobStatus == "canceling") {
+			inUse = true
+		}
+
 		return &CursorValue{
-			Cursor:       cursor,
-			OffsetCursor: cursorOffset,
-			Exists:       true,
-			Offset:       offset,
-			LastJobId:    lastJobId,
+			Cursor:        cursor,
+			OffsetCursor:  cursorOffset,
+			Exists:        true,
+			Offset:        offset,
+			LastJobId:     lastJobId,
+			LastJobStatus: lastJobStatus,
+			InUse:         inUse,
 		}, nil
 	})
 }
@@ -170,6 +180,9 @@ func UpdateCursorJobId(ctx context.Context, client *ccloud.CcloudClient, cluster
 		var status *string
 		var returnedKey *string
 		defer func() {
+			if tx.Status() != pgx.TxStatusInProgress {
+				return
+			}
 			r := tx.Rollback()
 			if r != nil {
 				err = r

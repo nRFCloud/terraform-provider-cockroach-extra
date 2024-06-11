@@ -458,6 +458,11 @@ func (r *ChangefeedResource) Create(ctx context.Context, req resource.CreateRequ
 		if cursorValue.OffsetCursor != nil {
 			data.Options.Cursor = types.StringValue(*cursorValue.OffsetCursor)
 		}
+
+		if cursorValue.InUse {
+			resp.Diagnostics.AddError("Persistent cursor is in use", "The persistent cursor is currently in use by another job")
+			return
+		}
 	}
 
 	// Iterate through the keys of the options struct and build a string of options ex: SET option1 = value1, option2 = value2
@@ -533,6 +538,20 @@ func (r *ChangefeedResource) Create(ctx context.Context, req resource.CreateRequ
 	err = UpdateCursorJobId(ctx, r.client, data.ClusterId.ValueString(), cursorKey, jobId)
 	if err != nil {
 		resp.Diagnostics.AddError("Unable to update cursor job ID", err.Error())
+		_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*interface{}, error) {
+			_, err := db.Exec(fmt.Sprintf("CANCEL JOB %d", data.JobId.ValueInt64()))
+
+			if err != nil {
+				return nil, err
+			}
+
+			err = waitForJobStatus(db, data.JobId.ValueInt64(), "canceled")
+
+			return nil, err
+		})
+		if err != nil {
+			resp.Diagnostics.AddError("Unable to cancel job", err.Error())
+		}
 		return
 	}
 
