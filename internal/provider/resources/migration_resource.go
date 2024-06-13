@@ -81,9 +81,9 @@ func (r *MigrationResource) Schema(ctx context.Context, req resource.SchemaReque
 				Required:            true,
 			},
 			"destroy_mode": schema.StringAttribute{
-				MarkdownDescription: "What to do when the resource is destroyed. 'noop' will do nothing, 'drop' will drop the database, 'down' will run all down migrations",
+				MarkdownDescription: "What to do when the resource is destroyed. 'noop' will do nothing and 'down' will run all down migrations",
 				Validators: []validator.String{
-					stringvalidator.OneOf("noop", "drop", "down"),
+					stringvalidator.OneOf("noop", "down"),
 				},
 				Required: true,
 			},
