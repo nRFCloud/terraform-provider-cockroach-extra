@@ -49,8 +49,7 @@ Optional:
 
 Optional:
 
-- `detached` (Boolean) Detached backup
-- `encryption_passphrase` (String) Encryption passphrase
+- `encryption_passphrase` (String, Sensitive) Encryption passphrase
 - `full_backup_frequency` (String) Frequency that full backups should be taken
 - `incremental_backup_location` (String) Explicit separate location for incremental backups
 - `kms` (String) KMS URI
