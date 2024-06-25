@@ -19,7 +19,7 @@ Backup schedule
 
 - `cluster_id` (String) Cluster ID
 - `label` (String) Label for the backup schedule
-- `location` (String) Location for the backup
+- `location` (String, Sensitive) Location for the backup
 - `recurring` (String) Recurring schedule
 - `target` (Attributes) Backup target (see [below for nested schema](#nestedatt--target))
 

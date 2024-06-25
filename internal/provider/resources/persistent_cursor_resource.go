@@ -154,7 +154,7 @@ where key = $1
 			return nil, err
 		}
 
-		if lastJobId != nil && lastJobStatus != nil && !(*lastJobStatus == "canceled" || *lastJobStatus == "failed" || *lastJobStatus == "succeeded" || *lastJobStatus == "canceling") {
+		if lastJobId != nil && lastJobStatus != nil && IsJobStatusRunning(*lastJobStatus) {
 			inUse = true
 		}
 
@@ -195,7 +195,7 @@ func UpdateCursorJobId(ctx context.Context, client *ccloud.CcloudClient, cluster
 			return nil, err
 		}
 
-		if currentJobId != nil && !(*status == "canceled" || *status == "failed" || *status == "succeeded" || *status == "canceling") {
+		if currentJobId != nil && IsJobStatusRunning(*status) {
 			return nil, fmt.Errorf("cursor is still in use by job %d", *currentJobId)
 		}
 
@@ -296,7 +296,8 @@ func (r *PersistentCursorResource) Read(ctx context.Context, req resource.ReadRe
 	}
 
 	if !cursorValue.Exists {
-		resp.Diagnostics.AddError("Persistent cursor not found", fmt.Sprintf("Cursor with key %s not found", data.Key.ValueString()))
+		//resp.Diagnostics.AddError("Persistent cursor not found", fmt.Sprintf("Cursor with key %s not found", data.Key.ValueString()))
+		resp.State.RemoveResource(ctx)
 		return
 	}
 	data.ResumeOffset = types.Int64Value(*cursorValue.Offset)

@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -163,11 +164,17 @@ func (r *ExternalConnectionResource) Read(ctx context.Context, req resource.Read
 	exConnStatement, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*string, error) {
 		var connectionStatement string
 		err := db.QueryRow(fmt.Sprintf("SHOW CREATE EXTERNAL CONNECTION %s", pgx.Identifier{data.ConnectionName.ValueString()}.Sanitize())).Scan(nil, &connectionStatement)
+
 		if err != nil {
 			return nil, err
 		}
 		return &connectionStatement, nil
 	})
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		resp.State.RemoveResource(ctx)
+		return
+	}
 
 	if err != nil {
 		resp.Diagnostics.AddError("Unable to read external connection", err.Error())

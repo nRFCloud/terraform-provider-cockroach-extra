@@ -168,6 +168,7 @@ SQL query that the changefeed will use to filter the watched tables.
 			"sink_uri": schema.StringAttribute{
 				MarkdownDescription: "URI of the sink where the changefeed will send the changes",
 				Required:            true,
+				Sensitive:           true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplaceIf(func(ctx context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
 						var data ChangefeedResourceModel
@@ -188,7 +189,7 @@ SQL query that the changefeed will use to filter the watched tables.
 						"", ""),
 				},
 				Validators: []validator.String{
-					stringvalidator.OneOf("running", "paused", "canceling", "canceled", "failed", "succeeded"),
+					stringvalidator.OneOf("running", "paused", "canceling", "canceled", "failed", "succeeded", "cancel-requested"),
 				},
 			},
 			"options": schema.SingleNestedAttribute{
@@ -612,8 +613,9 @@ func (r *ChangefeedResource) Read(ctx context.Context, req resource.ReadRequest,
 		return
 	}
 
-	if changefeedInfo.status == "failed" || changefeedInfo.status == "canceled" || changefeedInfo.status == "canceling" {
-		resp.Diagnostics.AddError("Changefeed job in unexpected state", fmt.Sprintf("Changefeed job is in state: %s", changefeedInfo.status))
+	if !IsJobStatusRunning(changefeedInfo.status) {
+		//resp.Diagnostics.AddError("Changefeed job in unexpected state", fmt.Sprintf("Changefeed job is in state: %s", changefeedInfo.status))
+		resp.State.RemoveResource(ctx)
 		return
 	}
 
@@ -764,6 +766,10 @@ func stringListDelta(source []string, target []string) (added []string, removed 
 	return
 }
 
+func IsJobStatusRunning(status string) bool {
+	return status == "running" || status == "paused" || status == "pause-requested"
+}
+
 func (r *ChangefeedResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	bannedOptionUpdates := []string{
 		"end_time",
@@ -785,7 +791,7 @@ func (r *ChangefeedResource) Update(ctx context.Context, req resource.UpdateRequ
 
 	stateStatus := stateData.Status.ValueString()
 
-	if stateStatus == "canceled" || stateStatus == "failed" || stateStatus == "succeeded" || stateStatus == "canceling" {
+	if !IsJobStatusRunning(stateStatus) {
 		resp.Diagnostics.AddError("Unable to update changefeed", "Changefeed is not running")
 		return
 	}

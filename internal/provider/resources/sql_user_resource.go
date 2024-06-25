@@ -139,7 +139,7 @@ func (r *SqlUserResource) Read(ctx context.Context, req resource.ReadRequest, re
 	}
 
 	if !*exists {
-		data.Id = types.StringNull()
+		resp.State.RemoveResource(ctx)
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, data)...)

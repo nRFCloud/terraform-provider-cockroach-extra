@@ -73,6 +73,10 @@ func (r *BackupScheduleResource) Metadata(ctx context.Context, req resource.Meta
 	resp.TypeName = req.ProviderTypeName + "_backup_schedule"
 }
 
+func getBackupScheduleId(clusterId string, label string) string {
+	return fmt.Sprintf("backup_schedule|%s|%s", clusterId, label)
+}
+
 func (r *BackupScheduleResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Backup schedule",
@@ -97,6 +101,7 @@ func (r *BackupScheduleResource) Schema(ctx context.Context, req resource.Schema
 			"location": schema.StringAttribute{
 				MarkdownDescription: "Location for the backup",
 				Required:            true,
+				Sensitive:           true,
 			},
 			"recurring": schema.StringAttribute{
 				MarkdownDescription: "Recurring schedule",
@@ -353,16 +358,10 @@ func (r *BackupScheduleResource) Create(ctx context.Context, req resource.Create
 	} else if !data.Target.Tables.IsNull() {
 		var tables []string
 		data.Target.Tables.ElementsAs(ctx, &tables, false)
-		for i, table := range tables {
-			tables[i] = table
-		}
 		target = fmt.Sprintf("TABLE %s", strings.Join(tables, ","))
 	} else if !data.Target.Databases.IsNull() {
 		var databases []string
 		data.Target.Databases.ElementsAs(ctx, &databases, false)
-		for i, database := range databases {
-			databases[i] = database
-		}
 		target = fmt.Sprintf("DATABASE %s", strings.Join(databases, ","))
 	}
 
@@ -475,7 +474,7 @@ func (r *BackupScheduleResource) Create(ctx context.Context, req resource.Create
 		return
 	}
 
-	data.Id = data.Label
+	data.Id = types.StringValue(getBackupScheduleId(data.ClusterId.ValueString(), data.Label.ValueString()))
 	if scheduleIds.incrementalBackupId != nil {
 		data.IncrementalBackupScheduleId = types.Int64Value(*scheduleIds.incrementalBackupId)
 	} else {
@@ -529,6 +528,10 @@ func (r *BackupScheduleResource) Read(ctx context.Context, req resource.ReadRequ
 			if err != nil {
 				return nil, err
 			}
+			backupCommand, ok := parsedCommand.AST.(*tree.Backup)
+			if !ok {
+				return nil, fmt.Errorf("Unable to parse backup command")
+			}
 
 			if backupType == "FULL" {
 				schedules.fullBackup = &scheduleInfo{
@@ -537,7 +540,7 @@ func (r *BackupScheduleResource) Read(ctx context.Context, req resource.ReadRequ
 					recurrence:         recurrence,
 					onPreviousRunning:  onPreviousRunning,
 					onExecutionFailure: onExecutionFailure,
-					command:            parsedCommand.AST.(*tree.Backup),
+					command:            backupCommand,
 					backupType:         backupType,
 				}
 			} else {
@@ -547,7 +550,7 @@ func (r *BackupScheduleResource) Read(ctx context.Context, req resource.ReadRequ
 					recurrence:         recurrence,
 					onPreviousRunning:  onPreviousRunning,
 					onExecutionFailure: onExecutionFailure,
-					command:            parsedCommand.AST.(*tree.Backup),
+					command:            backupCommand,
 					backupType:         backupType,
 				}
 			}
@@ -561,7 +564,7 @@ func (r *BackupScheduleResource) Read(ctx context.Context, req resource.ReadRequ
 	}
 
 	if schedules.fullBackup == nil {
-		resp.Diagnostics.AddError("Full backup schedule not found", "")
+		resp.State.RemoveResource(ctx)
 		return
 	}
 
@@ -607,7 +610,6 @@ func (r *BackupScheduleResource) Read(ctx context.Context, req resource.ReadRequ
 		}
 		tableListValue, _ := types.ListValue(types.StringType, tables)
 		data.Target.Tables = tableListValue
-		break
 	case len(schedules.fullBackup.command.Targets.Databases) > 0:
 		databases := []attr.Value{}
 		for _, database := range schedules.fullBackup.command.Targets.Databases {
@@ -615,7 +617,6 @@ func (r *BackupScheduleResource) Read(ctx context.Context, req resource.ReadRequ
 		}
 		databaseListValue, _ := types.ListValue(types.StringType, databases)
 		data.Target.Databases = databaseListValue
-		break
 	default:
 		data.Target.FullClusterBackup = types.BoolValue(true)
 	}
@@ -770,7 +771,7 @@ func (r *BackupScheduleResource) Update(ctx context.Context, req resource.Update
 	} else {
 		plan.IncrementalBackupScheduleId = types.Int64Null()
 	}
-	plan.Id = plan.Label
+	plan.Id = types.StringValue(getBackupScheduleId(plan.ClusterId.ValueString(), plan.Label.ValueString()))
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }

@@ -18,7 +18,7 @@ Cluster setting
 ### Required
 
 - `cluster_id` (String) Cluster ID
-- `sink_uri` (String) URI of the sink where the changefeed will send the changes
+- `sink_uri` (String, Sensitive) URI of the sink where the changefeed will send the changes
 
 ### Optional
 

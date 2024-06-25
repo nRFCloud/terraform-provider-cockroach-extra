@@ -139,7 +139,7 @@ func (r *RoleGrantResource) Read(ctx context.Context, req resource.ReadRequest, 
 	}
 
 	if !*result {
-		data.Id = types.StringNull()
+		resp.State.RemoveResource(ctx)
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
