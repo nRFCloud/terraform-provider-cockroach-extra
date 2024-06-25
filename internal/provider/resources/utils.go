@@ -1,6 +1,7 @@
 package resources
 
 import (
+	"github.com/jackc/pgx"
 	"net/url"
 	"sort"
 	"strings"
@@ -76,4 +77,8 @@ func CompareURLs(url1, url2 string) bool {
 	}
 
 	return true
+}
+
+func SanatizeValue(value string) string {
+	return strings.Replace(pgx.Identifier{value}.Sanitize(), "\"", "'", -1)
 }

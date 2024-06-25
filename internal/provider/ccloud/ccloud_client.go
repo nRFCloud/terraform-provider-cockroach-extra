@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/jackc/pgx"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -59,6 +61,9 @@ func processCloudResponse(resp *http.Response, outputStruct *interface{}) (err e
 			return CockroachCloudClusterNotReadyError{}
 		}
 		if errorBody.Code == 5 {
+			if strings.HasPrefix(errorBody.Message, "user") {
+				return CockroachCloudSqlUserNotFoundError{}
+			}
 			return CockroachCloudClusterNotFoundError{}
 		}
 		if errorBody.Code == 13 {
@@ -214,7 +219,8 @@ func (c *CcloudClient) deleteTempUser(_ context.Context, clusterId string, usern
 	err = processCloudResponse(resp, nil)
 
 	// check if user was not found
-	if _, ok := err.(CockroachCloudSqlUserNotFoundError); ok {
+	var cockroachCloudSqlUserNotFoundError CockroachCloudSqlUserNotFoundError
+	if errors.As(err, &cockroachCloudSqlUserNotFoundError) {
 		return nil
 	}
 
