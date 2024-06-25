@@ -35,7 +35,7 @@ func (r *SqlRoleResource) Metadata(ctx context.Context, req resource.MetadataReq
 
 func (r *SqlRoleResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Create a SQL user",
+		MarkdownDescription: "Create a SQL role",
 		Attributes: map[string]schema.Attribute{
 			"cluster_id": schema.StringAttribute{
 				MarkdownDescription: "Cluster ID",
