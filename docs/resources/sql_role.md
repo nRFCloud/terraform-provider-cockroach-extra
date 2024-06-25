@@ -3,12 +3,12 @@
 page_title: "cockroach-extra_sql_role Resource - terraform-provider-cockroach-extra"
 subcategory: ""
 description: |-
-  Create a SQL user
+  Create a SQL role
 ---
 
 # cockroach-extra_sql_role (Resource)
 
-Create a SQL user
+Create a SQL role
 
 
 
