@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"github.com/avast/retry-go"
+	"github.com/cockroachdb/cockroachdb-parser/pkg/sql/parser"
+	"github.com/cockroachdb/cockroachdb-parser/pkg/sql/sem/tree"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -21,6 +23,7 @@ import (
 	"github.com/jackc/pgx"
 	"github.com/lib/pq"
 	"github.com/nrfcloud/terraform-provider-cockroach-extra/internal/provider/ccloud"
+	"go/constant"
 	"reflect"
 	"regexp"
 	"slices"
@@ -28,7 +31,7 @@ import (
 	"time"
 )
 
-var _ resource.Resource = &ChangefeedResource{}
+var _ resource.ResourceWithConfigValidators = &ChangefeedResource{}
 
 //var _ resource.ResourceWithImportState = &ChangefeedResource{}
 
@@ -38,6 +41,51 @@ func NewChangefeedResource() resource.Resource {
 
 type ChangefeedResource struct {
 	client *ccloud.CcloudClient
+}
+
+type avroConfluentValidator struct {
+	resource.ConfigValidator
+}
+
+func (v *avroConfluentValidator) Description(ctx context.Context) string {
+	return v.MarkdownDescription(ctx)
+}
+func (v *avroConfluentValidator) MarkdownDescription(ctx context.Context) string {
+	return "Confluent schema validator must be set when format is set to avro"
+}
+func (v *avroConfluentValidator) ValidateResource(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var data ChangefeedResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+	if data.Options.Format.ValueString() == "avro" && data.Options.ConfluentSchemaRegistry.IsNull() {
+		resp.Diagnostics.AddError("Confluent schema registry must be set when format is set to avro", "")
+	}
+}
+
+type keyColumnValidator struct {
+	resource.ConfigValidator
+}
+
+func (v *keyColumnValidator) Description(ctx context.Context) string {
+	return v.MarkdownDescription(ctx)
+}
+
+func (v *keyColumnValidator) MarkdownDescription(ctx context.Context) string {
+	return "Unordered must be true when key_column is set"
+}
+
+func (v *keyColumnValidator) ValidateResource(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var data ChangefeedResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+	if !data.Options.KeyColumn.IsNull() && !data.Options.Unordered.ValueBool() {
+		resp.Diagnostics.AddError("Unordered must be true when key_column is set", "")
+	}
+}
+
+func (r *ChangefeedResource) ConfigValidators(ctx context.Context) []resource.ConfigValidator {
+	return []resource.ConfigValidator{
+		&avroConfluentValidator{},
+		&keyColumnValidator{},
+	}
 }
 
 type ChangefeedResourceModel struct {
@@ -266,8 +314,15 @@ Documentation for the options can be found [here](https://www.cockroachlabs.com/
 						MarkdownDescription: "Format",
 						Required:            false,
 						Optional:            true,
+
 						Validators: []validator.String{
-							stringvalidator.OneOf("json", "avro", "csv", "parquet"),
+							stringvalidator.Any(
+								stringvalidator.OneOf("json", "csv", "parquet"),
+								stringvalidator.All(
+									stringvalidator.OneOf("avro"),
+									stringvalidator.AlsoRequires(path.MatchRoot("options").AtName("confluent_schema_registry")),
+								),
+							),
 						},
 					},
 					"full_table_name": schema.BoolAttribute{
@@ -291,7 +346,7 @@ Documentation for the options can be found [here](https://www.cockroachlabs.com/
 							stringvalidator.OneOf("yes", "no", "only"),
 						},
 						PlanModifiers: []planmodifier.String{
-							stringplanmodifier.RequiresReplace(),
+							stringplanmodifier.RequiresReplaceIfConfigured(),
 						},
 					},
 					"kafka_sink_config": schema.StringAttribute{
@@ -303,6 +358,9 @@ Documentation for the options can be found [here](https://www.cockroachlabs.com/
 						MarkdownDescription: "Key column",
 						Required:            false,
 						Optional:            true,
+						Validators: []validator.String{
+							stringvalidator.AlsoRequires(path.MatchRoot("options").AtName("unordered")),
+						},
 					},
 					"key_in_value": schema.BoolAttribute{
 						MarkdownDescription: "Key in value",
@@ -579,13 +637,13 @@ func (r *ChangefeedResource) Read(ctx context.Context, req resource.ReadRequest,
 		statement      string
 		status         string
 		fullTableNames []string
-		highWaterMark  float64
+		highWaterMark  *float64
 	}, error) {
 		var statement string
 		var status string
 		var uri string
 		var fullTableNames []string
-		var highWaterMark float64
+		var highWaterMark *float64
 		err := db.QueryRow(fmt.Sprintf("SELECT description, status, sink_uri, full_table_names, high_water_timestamp from [SHOW CHANGEFEED JOB %d]", data.JobId.ValueInt64())).
 			Scan(&statement, &status, &uri, &fullTableNames, &highWaterMark)
 		if err != nil {
@@ -597,7 +655,7 @@ func (r *ChangefeedResource) Read(ctx context.Context, req resource.ReadRequest,
 			statement      string
 			status         string
 			fullTableNames []string
-			highWaterMark  float64
+			highWaterMark  *float64
 		}{
 			uri:            uri,
 			statement:      statement,
@@ -621,37 +679,28 @@ func (r *ChangefeedResource) Read(ctx context.Context, req resource.ReadRequest,
 
 	tflog.Info(ctx, fmt.Sprintf("Changefeed statement: %s", changefeedInfo.statement))
 
-	// Parse the statement to get the target and select
-	// ex: CREATE CHANGEFEED FOR table1, table2 INTO 'sink' WITH option1 = value1, option2
-	// ex: CREATE CHANGEFEED INTO 'sink' WITH option1 = value1, option2 = value2 AS SELECT * FROM table1
-	optionsRaw := ""
-
-	// Match prefix case-insensitive to detect the type of changefeed
-	if strings.HasPrefix(changefeedInfo.statement, "CREATE CHANGEFEED FOR") {
-		re := regexp.MustCompile(`(?i)create changefeed for[\s\S]+?into[\s\S]+?(?:with([\s\S]+?))?$`)
-		match := re.FindStringSubmatch(changefeedInfo.statement)
-		if len(match) != 2 {
-			resp.Diagnostics.AddError("Unable to parse changefeed statement", "Unable to parse changefeed statement")
-			return
-		}
-		optionsRaw = strings.TrimSpace(match[1])
-		targets := make([]attr.Value, len(changefeedInfo.fullTableNames))
-		for i, target := range changefeedInfo.fullTableNames {
-			targets[i] = types.StringValue(target)
-		}
-		data.Target, _ = types.ListValue(types.StringType, targets)
+	parsedChangefeedStatementUnchecked, err := parser.ParseOne(changefeedInfo.statement)
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to parse changefeed statement", err.Error())
+		return
+	}
+	parsedChangefeedStatement, ok := parsedChangefeedStatementUnchecked.AST.(*tree.CreateChangefeed)
+	if !ok {
+		resp.Diagnostics.AddError("Unable to parse changefeed statement", "Unable to parse changefeed statement")
+		return
 	}
 
-	if strings.HasPrefix(changefeedInfo.statement, "CREATE CHANGEFEED INTO") {
-		// Parse the statement with regex to extract the sink URI and options
-		re := regexp.MustCompile(`(?i)create changefeed into[\s\S]+?(?:with([\s\S]+?))?as([\s\S]+?)$`)
-		match := re.FindStringSubmatch(changefeedInfo.statement)
-		if len(match) != 3 {
-			resp.Diagnostics.AddError("Unable to parse changefeed statement", "Unable to parse changefeed statement")
-			return
+	if parsedChangefeedStatement.Targets != nil {
+		targets := make([]attr.Value, len(parsedChangefeedStatement.Targets))
+		for i, target := range parsedChangefeedStatement.Targets {
+			targets[i] = types.StringValue(target.TableName.String())
 		}
-		optionsRaw = strings.TrimSpace(match[1])
-		//data.Select = types.StringValue(strings.TrimSpace(match[2]))
+		data.Target, _ = types.ListValue(types.StringType, targets)
+	} else if parsedChangefeedStatement.Select != nil {
+		data.Select = types.StringValue(parsedChangefeedStatement.Select.String())
+	} else {
+		resp.Diagnostics.AddError("Unable to parse changefeed statement", "Unable to parse changefeed statement")
+		return
 	}
 
 	if !CompareURLs(data.SinkUri.ValueString(), changefeedInfo.uri) {
@@ -659,19 +708,15 @@ func (r *ChangefeedResource) Read(ctx context.Context, req resource.ReadRequest,
 	}
 
 	// Parse the options
-	options := strings.Split(strings.Trim(strings.Trim(optionsRaw, "("), ")"), ",")
-	for _, option := range options {
-		var key string
-		var value string
+	for _, option := range parsedChangefeedStatement.Options {
+		key := option.Key.String()
 
-		// Split the option into key and value
-		optionParts := strings.SplitN(option, "=", 2)
-		key = strings.TrimSpace(optionParts[0])
-		if len(optionParts) > 1 {
-			value = removeQuotes(strings.TrimSpace(optionParts[1]))
+		var value string
+		if option.Value != nil {
+			value = option.Value.String()
+			value = removeQuotes(value)
 		}
 
-		// Set the value of the option in the data struct
 		switch key {
 		case "avro_schema_prefix":
 			data.Options.AvroSchemaPrefix = types.StringValue(value)
@@ -818,9 +863,11 @@ func (r *ChangefeedResource) Update(ctx context.Context, req resource.UpdateRequ
 		}
 	}
 
+	alterCmds := tree.AlterChangefeedCmds{}
+
 	// Build the options string
-	var setList []string
-	var unsetList []string
+	var setList []tree.KVOption
+	var unsetList []tree.Name
 	optionsObjVal := reflect.ValueOf(data.Options)
 	stateOptionsVal := reflect.ValueOf(stateData.Options)
 	for i := 0; i < optionsObjVal.NumField(); i++ {
@@ -857,31 +904,36 @@ func (r *ChangefeedResource) Update(ctx context.Context, req resource.UpdateRequ
 		}
 
 		if value.IsNull() {
-			unsetList = append(unsetList, tag)
+			unsetList = append(unsetList, tree.Name(tag))
 		} else {
-			// Check if the value is a bool or string
-			switch v := value.(type) {
-			case types.Bool:
-				setList = append(setList, tag)
-			case types.String:
-				setList = append(setList, fmt.Sprintf("%s=%s", tag, pq.QuoteLiteral(v.ValueString())))
+			option := tree.KVOption{
+				Key: tree.Name(tag),
 			}
+			switch v := value.(type) {
+			case types.String:
+				option.Value = tree.NewStrVal(v.ValueString())
+			}
+			setList = append(setList, option)
 		}
 	}
 
 	if !data.SinkUri.Equal(stateData.SinkUri) {
-		setList = append(setList, fmt.Sprintf("sink='%s'", data.SinkUri.ValueString()))
+		setList = append(setList, tree.KVOption{
+			Key:   tree.Name("sink_uri"),
+			Value: tree.NewStrVal(data.SinkUri.ValueString()),
+		})
 	}
 
-	var setStatement string
-	var unsetStatement string
-
 	if len(setList) > 0 {
-		setStatement = fmt.Sprintf("SET %s", strings.Join(setList, ", "))
+		alterCmds = append(alterCmds, &tree.AlterChangefeedSetOptions{
+			Options: setList,
+		})
 	}
 
 	if len(unsetList) > 0 {
-		unsetStatement = fmt.Sprintf("UNSET %s", strings.Join(unsetList, ", "))
+		alterCmds = append(alterCmds, &tree.AlterChangefeedUnsetOptions{
+			Options: unsetList,
+		})
 	}
 
 	// Get the added and removed targets
@@ -891,28 +943,73 @@ func (r *ChangefeedResource) Update(ctx context.Context, req resource.UpdateRequ
 	stateData.Target.ElementsAs(ctx, &stateTargets, false)
 	addedTargets, removedTargets := stringListDelta(stateTargets, targets)
 
-	addTargetStatement := ""
-	removeTargetStatement := ""
-
 	if len(addedTargets) > 0 {
-		addTargetStatement = fmt.Sprintf("ADD %s", strings.Join(addedTargets, ", "))
+		changefeedTargets := tree.ChangefeedTargets{}
+		for _, target := range addedTargets {
+			targetParts := strings.Split(target, ".")
+			changefeedTargets = append(changefeedTargets, tree.ChangefeedTarget{
+				TableName: tree.NewTableNameWithSchema(tree.Name(targetParts[0]), tree.Name(targetParts[1]), tree.Name(targetParts[2])),
+			})
+		}
+
 		if data.InitialScanOnUpdate.IsNull() || !data.InitialScanOnUpdate.ValueBool() {
-			addTargetStatement += " WITH no_initial_scan"
+			alterCmds = append(alterCmds, &tree.AlterChangefeedAddTarget{
+				Targets: changefeedTargets,
+			})
 		} else {
-			addTargetStatement += " WITH initial_scan"
+			alterCmds = append(alterCmds, &tree.AlterChangefeedAddTarget{
+				Targets: changefeedTargets,
+				Options: tree.KVOptions{
+					{
+						Key:   tree.Name("initial_scan"),
+						Value: tree.NewStrVal("yes"),
+					},
+				},
+			})
 		}
 	}
 
 	if len(removedTargets) > 0 {
-		removeTargetStatement = fmt.Sprintf("DROP %s", strings.Join(removedTargets, ", "))
+		changefeedTargets := tree.ChangefeedTargets{}
+		for _, target := range removedTargets {
+			targetParts := strings.Split(target, ".")
+			changefeedTargets = append(changefeedTargets, tree.ChangefeedTarget{
+				TableName: tree.NewTableNameWithSchema(tree.Name(targetParts[0]), tree.Name(targetParts[1]), tree.Name(targetParts[2])),
+			})
+		}
+
+		alterCmds = append(alterCmds, &tree.AlterChangefeedDropTarget{
+			Targets: changefeedTargets,
+		})
 	}
 
-	query := fmt.Sprintf("ALTER CHANGEFEED %d %s %s %s %s", data.JobId.ValueInt64(), addTargetStatement, removeTargetStatement, setStatement, unsetStatement)
+	statement := tree.AlterChangefeed{
+		Jobs: tree.NewNumVal(
+			constant.MakeInt64(data.JobId.ValueInt64()),
+			fmt.Sprintf("%d", data.JobId.ValueInt64()),
+			false,
+		),
+		Cmds: alterCmds,
+	}
+
+	//query := fmt.Sprintf("ALTER CHANGEFEED %d %s %s %s %s", data.JobId.ValueInt64(), addTargetStatement, removeTargetStatement, setStatement, unsetStatement)
+	query := statement.String()
 
 	tflog.Info(ctx, fmt.Sprintf("Updating changefeed with query: %s", query))
 
-	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*interface{}, error) {
-		_, err := db.Exec(fmt.Sprintf("PAUSE JOB %d WITH REASON='Terraform Update'", data.JobId.ValueInt64()))
+	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (_ *interface{}, err error) {
+		defer func() {
+			_, resumeErr := db.Exec(fmt.Sprintf("RESUME JOB %d", data.JobId.ValueInt64()))
+			if resumeErr != nil {
+				err = resumeErr
+			}
+			resumeErr = waitForJobStatus(db, data.JobId.ValueInt64(), "running")
+			if resumeErr != nil {
+				err = resumeErr
+			}
+		}()
+
+		_, err = db.Exec(fmt.Sprintf("PAUSE JOB %d WITH REASON='Terraform Update'", data.JobId.ValueInt64()))
 		if err != nil {
 			return nil, err
 		}
@@ -926,13 +1023,6 @@ func (r *ChangefeedResource) Update(ctx context.Context, req resource.UpdateRequ
 		if err != nil {
 			return nil, err
 		}
-		_, err = db.Exec(fmt.Sprintf("RESUME JOB %d", data.JobId.ValueInt64()))
-		if err != nil {
-			return nil, err
-
-		}
-		// Wait until the job is running
-		err = waitForJobStatus(db, data.JobId.ValueInt64(), "running")
 
 		return nil, err
 	})

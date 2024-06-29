@@ -61,7 +61,7 @@ Optional:
 
 Optional:
 
-- `first_run` (String) When should the first
+- `first_run` (String) When should the first run be scheduled
 - `ignore_existing_backups` (Boolean) Ignore existing backups
 - `on_execution_failure` (String) What to do on execution failure
 - `on_previous_running` (String) What to do if the previous run is still running

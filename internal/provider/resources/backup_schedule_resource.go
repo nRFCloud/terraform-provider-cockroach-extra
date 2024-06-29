@@ -198,7 +198,7 @@ func (r *BackupScheduleResource) Schema(ctx context.Context, req resource.Schema
 				)),
 				Attributes: map[string]schema.Attribute{
 					"first_run": schema.StringAttribute{
-						MarkdownDescription: "When should the first ",
+						MarkdownDescription: "When should the first run be scheduled",
 						Optional:            true,
 						PlanModifiers: []planmodifier.String{
 							stringplanmodifier.UseStateForUnknown(),
@@ -603,6 +603,8 @@ func (r *BackupScheduleResource) Read(ctx context.Context, req resource.ReadRequ
 	}
 
 	switch true {
+	case schedules.fullBackup.command.Targets == nil:
+		data.Target.FullClusterBackup = types.BoolValue(true)
 	case len(schedules.fullBackup.command.Targets.Tables.TablePatterns) > 0:
 		tables := []attr.Value{}
 		for _, table := range schedules.fullBackup.command.Targets.Tables.TablePatterns {
@@ -617,8 +619,6 @@ func (r *BackupScheduleResource) Read(ctx context.Context, req resource.ReadRequ
 		}
 		databaseListValue, _ := types.ListValue(types.StringType, databases)
 		data.Target.Databases = databaseListValue
-	default:
-		data.Target.FullClusterBackup = types.BoolValue(true)
 	}
 
 	if schedules.fullBackup.command.Options.EncryptionKMSURI != nil && schedules.fullBackup.command.Options.EncryptionKMSURI[0] != nil {
