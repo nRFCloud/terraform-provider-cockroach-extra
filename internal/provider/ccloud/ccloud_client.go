@@ -253,7 +253,8 @@ func (c *CcloudClient) getConnectionOptions(ctx context.Context, clusterId strin
 		return nil, err
 	}
 
-	if processCloudResponse(resp, nil) != nil {
+	err = processCloudResponse(resp, nil)
+	if err != nil {
 		return nil, err
 	}
 
