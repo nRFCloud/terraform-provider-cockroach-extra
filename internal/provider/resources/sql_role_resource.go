@@ -147,7 +147,13 @@ func (r *SqlRoleResource) Delete(ctx context.Context, req resource.DeleteRequest
 	}
 
 	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*interface{}, error) {
-		_, err := db.Exec(fmt.Sprintf("DROP ROLE %s", pgx.Identifier{data.RoleName.ValueString()}.Sanitize()))
+		_, err := db.Exec(fmt.Sprintf("REVOKE ALL ON * FROM %s", pgx.Identifier{data.RoleName.ValueString()}.Sanitize()))
+
+		if err != nil {
+			return nil, err
+		}
+
+		_, err = db.Exec(fmt.Sprintf("DROP ROLE %s", pgx.Identifier{data.RoleName.ValueString()}.Sanitize()))
 		return nil, err
 	})
 

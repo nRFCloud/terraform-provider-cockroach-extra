@@ -294,18 +294,7 @@ func (r *MigrationResource) Delete(ctx context.Context, req resource.DeleteReque
 		}(sourceDriver)
 
 		migrator, err := migrate.NewWithInstance(data.MigrationsUrl.ValueString(), sourceDriver, data.Database.ValueString(), driver)
-		if err != nil {
-			return nil, err
-		}
-		if data.DestroyMode.ValueString() == "drop" {
-			_, err = db.Exec("DROP DATABASE IF EXISTS " + pgx.Identifier{data.Database.ValueString()}.Sanitize())
-			if err != nil {
-				return nil, err
-			}
-			_, err = db.Exec("CREATE DATABASE IF NOT EXISTS " + pgx.Identifier{data.Database.ValueString()}.Sanitize())
-		} else {
-			err = migrator.Down()
-		}
+		err = migrator.Down()
 
 		return nil, err
 	})
