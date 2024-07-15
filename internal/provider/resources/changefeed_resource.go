@@ -594,24 +594,26 @@ func (r *ChangefeedResource) Create(ctx context.Context, req resource.CreateRequ
 	data.Id = types.StringValue(getChangefeedId(data.ClusterId.ValueString(), *jobId))
 	data.Status = types.StringValue("running")
 
-	err = UpdateCursorJobId(ctx, r.client, data.ClusterId.ValueString(), cursorKey, jobId)
-	if err != nil {
-		resp.Diagnostics.AddError("Unable to update cursor job ID", err.Error())
-		_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*interface{}, error) {
-			_, err := db.Exec(fmt.Sprintf("CANCEL JOB %d", data.JobId.ValueInt64()))
-
-			if err != nil {
-				return nil, err
-			}
-
-			err = waitForJobStatus(db, data.JobId.ValueInt64(), "canceled")
-
-			return nil, err
-		})
+	if !data.PersistentCursor.IsNull() {
+		err = UpdateCursorJobId(ctx, r.client, data.ClusterId.ValueString(), cursorKey, jobId)
 		if err != nil {
-			resp.Diagnostics.AddError("Unable to cancel job", err.Error())
+			resp.Diagnostics.AddError("Unable to update cursor job ID", err.Error())
+			_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*interface{}, error) {
+				_, err := db.Exec(fmt.Sprintf("CANCEL JOB %d", data.JobId.ValueInt64()))
+	
+				if err != nil {
+					return nil, err
+				}
+	
+				err = waitForJobStatus(db, data.JobId.ValueInt64(), "canceled")
+	
+				return nil, err
+			})
+			if err != nil {
+				resp.Diagnostics.AddError("Unable to cancel job", err.Error())
+			}
+			return
 		}
-		return
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
