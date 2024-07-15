@@ -600,13 +600,13 @@ func (r *ChangefeedResource) Create(ctx context.Context, req resource.CreateRequ
 			resp.Diagnostics.AddError("Unable to update cursor job ID", err.Error())
 			_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (*interface{}, error) {
 				_, err := db.Exec(fmt.Sprintf("CANCEL JOB %d", data.JobId.ValueInt64()))
-	
+
 				if err != nil {
 					return nil, err
 				}
-	
+
 				err = waitForJobStatus(db, data.JobId.ValueInt64(), "canceled")
-	
+
 				return nil, err
 			})
 			if err != nil {
