@@ -300,6 +300,10 @@ func (r *MigrationResource) Delete(ctx context.Context, req resource.DeleteReque
 	})
 
 	if err != nil {
+		if errors.Is(err, migrate.ErrNoChange) {
+			return
+		}
+
 		resp.Diagnostics.AddError("Error running migrations", err.Error())
 		return
 	}
