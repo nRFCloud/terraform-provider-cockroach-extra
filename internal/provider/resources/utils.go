@@ -7,6 +7,37 @@ import (
 	"strings"
 )
 
+func revokeAllPrivileges(db *pgx.ConnPool, principal string) error {
+	rows, err := db.Query("select database_name from [show databases]")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var dbNames []string
+	for rows.Next() {
+		var dbName string
+		err = rows.Scan(&dbName)
+		if err != nil {
+			return err
+		}
+		if dbName != "system" && dbName != "postgres" {
+			dbNames = append(dbNames, dbName)
+		}
+	}
+
+	for _, dbName := range dbNames {
+		_, err = db.Exec("REVOKE ALL ON " + pgx.Identifier{dbName}.Sanitize() + ".* FROM " + pgx.Identifier{principal}.Sanitize())
+		if err != nil {
+			if strings.Contains(err.Error(), "no object matched") {
+				// This means that the database has nothing in it
+				continue
+			}
+			return err
+		}
+	}
+	return nil
+}
+
 func CompareURLs(url1, url2 string) bool {
 	parsedUrl1, err1 := url.Parse(url1)
 	parsedUrl2, err2 := url.Parse(url2)
