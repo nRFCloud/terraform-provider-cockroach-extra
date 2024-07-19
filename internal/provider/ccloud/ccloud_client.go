@@ -6,13 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/hashicorp/terraform-plugin-log/tflog"
-	"github.com/jackc/pgx"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"github.com/jackc/pgx"
 )
 
 type CcloudClient struct {
@@ -174,7 +175,7 @@ func (c *CcloudClient) updateUserExpiration(ctx context.Context, clusterId strin
 	if err != nil {
 		return err
 	}
-	expTime := time.Now().Add(4 * time.Minute)
+	expTime := time.Now().Add(30 * time.Minute)
 	_, err = pool.Exec(fmt.Sprintf("ALTER USER %s WITH VALID UNTIL $1", pgx.Identifier{user.Username}.Sanitize()), expTime.Format(time.RFC3339))
 	return err
 }
