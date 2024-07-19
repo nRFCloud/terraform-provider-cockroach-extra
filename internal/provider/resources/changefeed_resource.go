@@ -3,6 +3,13 @@ package resources
 import (
 	"context"
 	"fmt"
+	"go/constant"
+	"reflect"
+	"regexp"
+	"slices"
+	"strings"
+	"time"
+
 	"github.com/avast/retry-go"
 	"github.com/cockroachdb/cockroachdb-parser/pkg/sql/parser"
 	"github.com/cockroachdb/cockroachdb-parser/pkg/sql/sem/tree"
@@ -23,12 +30,6 @@ import (
 	"github.com/jackc/pgx"
 	"github.com/lib/pq"
 	"github.com/nrfcloud/terraform-provider-cockroach-extra/internal/provider/ccloud"
-	"go/constant"
-	"reflect"
-	"regexp"
-	"slices"
-	"strings"
-	"time"
 )
 
 var _ resource.ResourceWithConfigValidators = &ChangefeedResource{}
@@ -985,53 +986,55 @@ func (r *ChangefeedResource) Update(ctx context.Context, req resource.UpdateRequ
 		})
 	}
 
-	statement := tree.AlterChangefeed{
-		Jobs: tree.NewNumVal(
-			constant.MakeInt64(data.JobId.ValueInt64()),
-			fmt.Sprintf("%d", data.JobId.ValueInt64()),
-			false,
-		),
-		Cmds: alterCmds,
-	}
+	if len(alterCmds) > 0 {
+		statement := tree.AlterChangefeed{
+			Jobs: tree.NewNumVal(
+				constant.MakeInt64(data.JobId.ValueInt64()),
+				fmt.Sprintf("%d", data.JobId.ValueInt64()),
+				false,
+			),
+			Cmds: alterCmds,
+		}
 
-	//query := fmt.Sprintf("ALTER CHANGEFEED %d %s %s %s %s", data.JobId.ValueInt64(), addTargetStatement, removeTargetStatement, setStatement, unsetStatement)
-	query := statement.String()
+		//query := fmt.Sprintf("ALTER CHANGEFEED %d %s %s %s %s", data.JobId.ValueInt64(), addTargetStatement, removeTargetStatement, setStatement, unsetStatement)
+		query := statement.String()
 
-	tflog.Info(ctx, fmt.Sprintf("Updating changefeed with query: %s", query))
+		tflog.Info(ctx, fmt.Sprintf("Updating changefeed with query: %s", query))
 
-	_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (_ *interface{}, err error) {
-		defer func() {
-			_, resumeErr := db.Exec(fmt.Sprintf("RESUME JOB %d", data.JobId.ValueInt64()))
-			if resumeErr != nil {
-				err = resumeErr
+		_, err := ccloud.SqlConWithTempUser(ctx, r.client, data.ClusterId.ValueString(), "defaultdb", func(db *pgx.ConnPool) (_ *interface{}, err error) {
+			defer func() {
+				_, resumeErr := db.Exec(fmt.Sprintf("RESUME JOB %d", data.JobId.ValueInt64()))
+				if resumeErr != nil {
+					err = resumeErr
+				}
+				resumeErr = waitForJobStatus(db, data.JobId.ValueInt64(), "running")
+				if resumeErr != nil {
+					err = resumeErr
+				}
+			}()
+
+			_, err = db.Exec(fmt.Sprintf("PAUSE JOB %d WITH REASON='Terraform Update'", data.JobId.ValueInt64()))
+			if err != nil {
+				return nil, err
 			}
-			resumeErr = waitForJobStatus(db, data.JobId.ValueInt64(), "running")
-			if resumeErr != nil {
-				err = resumeErr
+			// Wait until the job is paused
+			err = waitForJobStatus(db, data.JobId.ValueInt64(), "paused")
+			if err != nil {
+				return nil, err
 			}
-		}()
 
-		_, err = db.Exec(fmt.Sprintf("PAUSE JOB %d WITH REASON='Terraform Update'", data.JobId.ValueInt64()))
-		if err != nil {
+			_, err = db.Exec(query)
+			if err != nil {
+				return nil, err
+			}
+
 			return nil, err
-		}
-		// Wait until the job is paused
-		err = waitForJobStatus(db, data.JobId.ValueInt64(), "paused")
+		})
+
 		if err != nil {
-			return nil, err
+			resp.Diagnostics.AddError("Unable to update changefeed", err.Error())
+			return
 		}
-
-		_, err = db.Exec(query)
-		if err != nil {
-			return nil, err
-		}
-
-		return nil, err
-	})
-
-	if err != nil {
-		resp.Diagnostics.AddError("Unable to update changefeed", err.Error())
-		return
 	}
 
 	data.Status = types.StringValue("running")
