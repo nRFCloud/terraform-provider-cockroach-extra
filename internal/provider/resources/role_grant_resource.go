@@ -205,7 +205,7 @@ func (r *RoleGrantResource) ImportState(ctx context.Context, req resource.Import
 		// If the role is not found, the query will return an empty row
 		var result bool
 		var response int
-		err := db.QueryRow(fmt.Sprintf("select 1 from [show grants on role %s] where member=$1", pgx.Identifier{role}.Sanitize()), pgx.Identifier{username}.Sanitize()).Scan(&response)
+		err := db.QueryRow(fmt.Sprintf("select 1 from [show grants on role %s] where member=$1", pgx.Identifier{role}.Sanitize()), username).Scan(&response)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return nil, err
 		}
@@ -223,7 +223,7 @@ func (r *RoleGrantResource) ImportState(ctx context.Context, req resource.Import
 	}
 
 	if !*exists {
-		resp.Diagnostics.AddError("Role grant does not exist", err.Error())
+		resp.Diagnostics.AddError("Failed to import role grant", fmt.Sprintf("Rolegrant with for user: '%s' and role: '%s' does not exist", username, role))
 		return
 	}
 

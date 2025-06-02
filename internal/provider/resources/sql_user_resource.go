@@ -217,7 +217,7 @@ func (r *SqlUserResource) ImportState(ctx context.Context, req resource.ImportSt
 
 	exists, err := ccloud.SqlConWithTempUser(ctx, r.client, clusterId, "defaultdb", func(db *pgx.ConnPool) (*bool, error) {
 		var result bool
-		err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM [SHOW USERS] WHERE username = $1)", pgx.Identifier{username}.Sanitize()).Scan(&result)
+		err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM [SHOW USERS] WHERE username = $1)", username).Scan(&result)
 		return &result, err
 	})
 
@@ -231,7 +231,7 @@ func (r *SqlUserResource) ImportState(ctx context.Context, req resource.ImportSt
 	}
 
 	if !*exists {
-		resp.Diagnostics.AddError("User does not exist", err.Error())
+		resp.Diagnostics.AddError("Failed to import user", fmt.Sprintf("User with username: '%s' does not exist", username))
 		return
 	}
 
