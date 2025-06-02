@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/jackc/pgx"
 	"github.com/nrfcloud/terraform-provider-cockroach-extra/internal/provider/ccloud"
+	"strings"
 )
 
 var _ resource.Resource = &SqlUserResource{}
@@ -21,6 +22,21 @@ func NewSqlUserResource() resource.Resource {
 
 type SqlUserResource struct {
 	client *ccloud.CcloudClient
+}
+
+func buildSqlUserId(clusterId string, username string) string {
+	return fmt.Sprintf("user|%s|%s", clusterId, username)
+}
+
+func parseSqlUserId(id string) (clusterId string, username string, err error) {
+	parts := strings.Split(id, "|")
+	if len(parts) != 3 {
+		return "", "", fmt.Errorf("invalid external connection ID")
+	}
+	if parts[0] != "user" {
+		return "", "", fmt.Errorf("resource id must start with 'user'")
+	}
+	return parts[1], parts[2], nil
 }
 
 type SqlUserResourceModel struct {
@@ -81,10 +97,6 @@ func (r *SqlUserResource) Configure(ctx context.Context, req resource.ConfigureR
 	r.client = client
 }
 
-func getSqlUserId(clusterId string, username string) string {
-	return fmt.Sprintf("user|%s|%s", clusterId, username)
-}
-
 func (r *SqlUserResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data SqlUserResourceModel
 
@@ -109,7 +121,7 @@ func (r *SqlUserResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
-	data.Id = types.StringValue(getSqlUserId(data.ClusterId.ValueString(), data.Username.ValueString()))
+	data.Id = types.StringValue(buildSqlUserId(data.ClusterId.ValueString(), data.Username.ValueString()))
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, data)...)
 }
@@ -194,4 +206,40 @@ func (r *SqlUserResource) Delete(ctx context.Context, req resource.DeleteRequest
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, data)...)
+}
+
+func (r *SqlUserResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	clusterId, username, err := parseSqlUserId(req.ID)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid external connection ID", err.Error())
+		return
+	}
+
+	exists, err := ccloud.SqlConWithTempUser(ctx, r.client, clusterId, "defaultdb", func(db *pgx.ConnPool) (*bool, error) {
+		var result bool
+		err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM [SHOW USERS] WHERE username = $1)", pgx.Identifier{username}.Sanitize()).Scan(&result)
+		return &result, err
+	})
+
+	if err != nil {
+		if errors.Is(err, &ccloud.CockroachCloudClusterNotReadyError{}) || errors.Is(err, &ccloud.CockroachCloudClusterNotFoundError{}) {
+			*exists = false
+		} else {
+			resp.Diagnostics.AddError("error importing user", err.Error())
+			return
+		}
+	}
+
+	if !*exists {
+		resp.Diagnostics.AddError("User does not exist", err.Error())
+		return
+	}
+
+	var data SqlUserResourceModel
+	data.ClusterId = types.StringValue(clusterId)
+	data.Username = types.StringValue(username)
+	data.Password = types.StringValue("")
+	data.Id = types.StringValue(req.ID)
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
