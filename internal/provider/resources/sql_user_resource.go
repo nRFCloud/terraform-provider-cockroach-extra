@@ -31,7 +31,7 @@ func buildSqlUserId(clusterId string, username string) string {
 func parseSqlUserId(id string) (clusterId string, username string, err error) {
 	parts := strings.Split(id, "|")
 	if len(parts) != 3 {
-		return "", "", fmt.Errorf("invalid external connection ID")
+		return "", "", fmt.Errorf("invalid user resource ID")
 	}
 	if parts[0] != "user" {
 		return "", "", fmt.Errorf("resource id must start with 'user'")
@@ -211,7 +211,7 @@ func (r *SqlUserResource) Delete(ctx context.Context, req resource.DeleteRequest
 func (r *SqlUserResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	clusterId, username, err := parseSqlUserId(req.ID)
 	if err != nil {
-		resp.Diagnostics.AddError("Invalid external connection ID", err.Error())
+		resp.Diagnostics.AddError("Invalid sql user resource ID", err.Error())
 		return
 	}
 

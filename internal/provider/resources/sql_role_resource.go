@@ -37,7 +37,7 @@ func buildSqlRoleId(clusterId string, username string) string {
 func parseSqlRoleId(id string) (clusterId string, username string, err error) {
 	parts := strings.Split(id, "|")
 	if len(parts) != 3 {
-		return "", "", fmt.Errorf("invalid external connection ID")
+		return "", "", fmt.Errorf("invalid role resource ID")
 	}
 	if parts[0] != "role" {
 		return "", "", fmt.Errorf("resource id must start with 'role'")
@@ -181,7 +181,7 @@ func (r *SqlRoleResource) Delete(ctx context.Context, req resource.DeleteRequest
 func (r *SqlRoleResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	clusterId, username, err := parseSqlRoleId(req.ID)
 	if err != nil {
-		resp.Diagnostics.AddError("Invalid external connection ID", err.Error())
+		resp.Diagnostics.AddError("Invalid sql role resource ID", err.Error())
 		return
 	}
 
