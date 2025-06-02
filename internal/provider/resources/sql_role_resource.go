@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/jackc/pgx"
 	"github.com/nrfcloud/terraform-provider-cockroach-extra/internal/provider/ccloud"
+	"strings"
 )
 
 var _ resource.Resource = &SqlRoleResource{}
@@ -27,6 +28,21 @@ type SqlRoleResourceModel struct {
 	ClusterId types.String `tfsdk:"cluster_id"`
 	RoleName  types.String `tfsdk:"name"`
 	Id        types.String `tfsdk:"id"`
+}
+
+func buildSqlRoleId(clusterId string, username string) string {
+	return fmt.Sprintf("role|%s|%s", clusterId, username)
+}
+
+func parseSqlRoleId(id string) (clusterId string, username string, err error) {
+	parts := strings.Split(id, "|")
+	if len(parts) != 3 {
+		return "", "", fmt.Errorf("invalid external connection ID")
+	}
+	if parts[0] != "role" {
+		return "", "", fmt.Errorf("resource id must start with 'role'")
+	}
+	return parts[1], parts[2], nil
 }
 
 func (r *SqlRoleResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -75,10 +91,6 @@ func (r *SqlRoleResource) Configure(ctx context.Context, req resource.ConfigureR
 	r.client = client
 }
 
-func getSqlRoleId(clusterId string, username string) string {
-	return fmt.Sprintf("role|%s|%s", clusterId, username)
-}
-
 func (r *SqlRoleResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data SqlRoleResourceModel
 
@@ -98,7 +110,7 @@ func (r *SqlRoleResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
-	data.Id = types.StringValue(getSqlRoleId(data.ClusterId.ValueString(), data.RoleName.ValueString()))
+	data.Id = types.StringValue(buildSqlRoleId(data.ClusterId.ValueString(), data.RoleName.ValueString()))
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, data)...)
 }
@@ -164,4 +176,39 @@ func (r *SqlRoleResource) Delete(ctx context.Context, req resource.DeleteRequest
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, data)...)
+}
+
+func (r *SqlRoleResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	clusterId, username, err := parseSqlRoleId(req.ID)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid external connection ID", err.Error())
+		return
+	}
+
+	exists, err := ccloud.SqlConWithTempUser(ctx, r.client, clusterId, "defaultdb", func(db *pgx.ConnPool) (*bool, error) {
+		var result bool
+		err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM [SHOW USERS] WHERE username = $1)", pgx.Identifier{username}.Sanitize()).Scan(&result)
+		return &result, err
+	})
+
+	if err != nil {
+		if errors.Is(err, &ccloud.CockroachCloudClusterNotReadyError{}) || errors.Is(err, &ccloud.CockroachCloudClusterNotFoundError{}) {
+			*exists = false
+		} else {
+			resp.Diagnostics.AddError("error importing role", err.Error())
+			return
+		}
+	}
+
+	if !*exists {
+		resp.Diagnostics.AddError("Role does not exist", err.Error())
+		return
+	}
+
+	var data SqlRoleResourceModel
+	data.ClusterId = types.StringValue(clusterId)
+	data.RoleName = types.StringValue(username)
+	data.Id = types.StringValue(req.ID)
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
