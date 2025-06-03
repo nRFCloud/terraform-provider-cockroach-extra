@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -29,6 +30,21 @@ type RoleGrantResourceModel struct {
 	Username  types.String `tfsdk:"user_name"`
 	Role      types.String `tfsdk:"role_name"`
 	Id        types.String `tfsdk:"id"`
+}
+
+func buildRoleGrantId(clusterId string, username string, role string) string {
+	return "role_grant|" + clusterId + "|" + username + "|" + role
+}
+
+func parseRoleGrantId(id string) (clusterId string, username string, role string, err error) {
+	parts := strings.Split(id, "|")
+	if len(parts) != 4 {
+		return "", "", "", fmt.Errorf("invalid role_grant resource ID")
+	}
+	if parts[0] != "role_grant" {
+		return "", "", "", fmt.Errorf("resource id must start with 'role_grant'")
+	}
+	return parts[1], parts[2], parts[3], nil
 }
 
 func (r *RoleGrantResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -85,10 +101,6 @@ func (r *RoleGrantResource) Configure(ctx context.Context, req resource.Configur
 	r.client = client
 }
 
-func getRoleGrantId(clusterId string, username string, role string) string {
-	return "role_grant|" + clusterId + "|" + username + "|" + role
-}
-
 func (r *RoleGrantResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var data RoleGrantResourceModel
 
@@ -108,7 +120,7 @@ func (r *RoleGrantResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 
-	data.Id = types.StringValue(getRoleGrantId(data.ClusterId.ValueString(), data.Username.ValueString(), data.Role.ValueString()))
+	data.Id = types.StringValue(buildRoleGrantId(data.ClusterId.ValueString(), data.Username.ValueString(), data.Role.ValueString()))
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -178,6 +190,48 @@ func (r *RoleGrantResource) Delete(ctx context.Context, req resource.DeleteReque
 		resp.Diagnostics.AddError("Failed to revoke role", err.Error())
 		return
 	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+func (r *RoleGrantResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	clusterId, username, role, err := parseRoleGrantId(req.ID)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid role grant resource ID", err.Error())
+		return
+	}
+
+	exists, err := ccloud.SqlConWithTempUser(ctx, r.client, clusterId, "defaultdb", func(db *pgx.ConnPool) (*bool, error) {
+		// If the role is not found, the query will return an empty row
+		var result bool
+		var response int
+		err := db.QueryRow(fmt.Sprintf("select 1 from [show grants on role %s] where member=$1", pgx.Identifier{role}.Sanitize()), username).Scan(&response)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+		result = !errors.Is(err, pgx.ErrNoRows)
+		return &result, nil
+	})
+
+	if err != nil {
+		if errors.Is(err, &ccloud.CockroachCloudClusterNotReadyError{}) || errors.Is(err, &ccloud.CockroachCloudClusterNotFoundError{}) {
+			*exists = false
+		} else {
+			resp.Diagnostics.AddError("error importing role grant", err.Error())
+			return
+		}
+	}
+
+	if !*exists {
+		resp.Diagnostics.AddError("Failed to import role grant", fmt.Sprintf("Rolegrant with for user: '%s' and role: '%s' does not exist", username, role))
+		return
+	}
+
+	var data RoleGrantResourceModel
+	data.ClusterId = types.StringValue(clusterId)
+	data.Username = types.StringValue(username)
+	data.Role = types.StringValue(role)
+	data.Id = types.StringValue(req.ID)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
