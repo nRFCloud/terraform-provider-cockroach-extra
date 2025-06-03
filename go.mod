@@ -1,6 +1,6 @@
 module github.com/nrfcloud/terraform-provider-cockroach-extra
 
-go 1.21.3
+go 1.24.3
 
 require (
 	github.com/avast/retry-go v3.0.0+incompatible
