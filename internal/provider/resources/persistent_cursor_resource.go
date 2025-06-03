@@ -220,12 +220,12 @@ func UpdateCursorJobId(ctx context.Context, client *ccloud.CcloudClient, cluster
 	return err
 }
 
-func ParseCursorId(cursorId string) (clusterId, key string) {
+func ParseCursorId(cursorId string) (clusterId, key string, err error) {
 	parts := strings.Split(cursorId, "|")
 	if len(parts) != 3 || parts[0] != "cursor" {
-		panic(fmt.Sprintf("Unable to parse cursor ID %s", cursorId))
+		return "", "", fmt.Errorf("unable to parse cursor ID %s", cursorId)
 	}
-	return parts[1], parts[2]
+	return parts[1], parts[2], nil
 }
 
 func (r *PersistentCursorResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -357,4 +357,35 @@ func (r *PersistentCursorResource) Delete(ctx context.Context, req resource.Dele
 		resp.Diagnostics.AddError("Unable to reset cluster setting", err.Error())
 		return
 	}
+}
+
+func (r *PersistentCursorResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	clusterId, key, err := ParseCursorId(req.ID)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid persistent cursor resource ID", err.Error())
+		return
+	}
+
+	cursorValue, err := GetCursor(ctx, r.client, clusterId, key)
+	if err != nil {
+		resp.Diagnostics.AddError(fmt.Sprintf("Failed to get persistent cursor with key: '%s' for cluster: '%s'", key, clusterId), err.Error())
+		return
+	}
+
+	var data PersistentCursorResourceModel
+	data.Id = types.StringValue(req.ID)
+	data.Ref = data.Id
+	data.ClusterId = types.StringValue(clusterId)
+	data.Key = types.StringValue(key)
+	if cursorValue.Offset != nil {
+		data.ResumeOffset = types.Int64Value(*cursorValue.Offset)
+	}
+	if cursorValue.LastJobId != nil {
+		data.LastUsedJobId = types.Int64Value(*cursorValue.LastJobId)
+	}
+	if cursorValue.OffsetCursor != nil {
+		data.HighWaterMark = types.StringValue(*cursorValue.OffsetCursor)
+	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
