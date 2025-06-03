@@ -507,7 +507,12 @@ func (r *ChangefeedResource) Create(ctx context.Context, req resource.CreateRequ
 	var cursorKey string
 	// Check if the persistent_cursor is set
 	if !data.PersistentCursor.IsNull() {
-		_, cursorKey = ParseCursorId(data.PersistentCursor.ValueString())
+		_, cursorKey, err := ParseCursorId(data.PersistentCursor.ValueString())
+		if err != nil {
+			resp.Diagnostics.AddError("Unable to parse persistent cursor ID", err.Error())
+			return
+		}
+
 		cursorValue, err := GetCursor(ctx, r.client, data.ClusterId.ValueString(), cursorKey)
 
 		if err != nil {
@@ -851,18 +856,26 @@ func (r *ChangefeedResource) Update(ctx context.Context, req resource.UpdateRequ
 
 	if !data.PersistentCursor.Equal(stateData.PersistentCursor) {
 		var err error
-		if data.PersistentCursor.IsNull() {
-			_, cursorKey := ParseCursorId(stateData.PersistentCursor.ValueString())
-			err = UpdateCursorJobId(ctx, r.client, data.ClusterId.ValueString(), cursorKey, nil)
-		} else {
-			_, cursorKey := ParseCursorId(data.PersistentCursor.ValueString())
-			err = UpdateCursorJobId(ctx, r.client, data.ClusterId.ValueString(), cursorKey, data.JobId.ValueInt64Pointer())
-		}
+		var cursorKey string
 
+		if data.PersistentCursor.IsNull() {
+			_, cursorKey, err = ParseCursorId(stateData.PersistentCursor.ValueString())
+		} else {
+			_, cursorKey, err = ParseCursorId(data.PersistentCursor.ValueString())
+		}
 		if err != nil {
 			resp.Diagnostics.AddError("Unable to update cursor job ID", err.Error())
 			return
+		}
 
+		if data.PersistentCursor.IsNull() {
+			err = UpdateCursorJobId(ctx, r.client, data.ClusterId.ValueString(), cursorKey, nil)
+		} else {
+			err = UpdateCursorJobId(ctx, r.client, data.ClusterId.ValueString(), cursorKey, data.JobId.ValueInt64Pointer())
+		}
+		if err != nil {
+			resp.Diagnostics.AddError("Unable to update cursor job ID", err.Error())
+			return
 		}
 	}
 
